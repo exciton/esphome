@@ -5,6 +5,7 @@ Kudos to these projects:
 - Reverse engineering of the protocol: https://codeberg.org/xye/xye
 - Working implementation using ESP32: https://github.com/Bunicutz/ESP32_Midea_RS485
 - Fully integrated Midea Climate component: https://github.com/esphome/esphome/tree/dev/esphome/components/midea
+- description of the XYE Modbus RS485 protocol: https://1drv.ms/b/s!AnSeFG-w06Q-gvE3_thcrzYVvYaFhQ?e=f1GpLM
 
 To get this to work you need an esphome configuration like this:
 
