@@ -49,7 +49,7 @@ void AirConditioner::setup() {
   this->fan_mode = ClimateFanMode::CLIMATE_FAN_AUTO;
 
   //Set interface to Celcius
-  setClientCommand(CLIENT_COMMAND_CELCIUS);
+  //setClientCommand(CLIENT_COMMAND_CELCIUS);
   this->uart_->write_array(TXData, TX_LEN);
   this->uart_->flush();
   delay(this->response_timeout);
