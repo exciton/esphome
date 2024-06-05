@@ -34,7 +34,6 @@ from esphome.const import (
     UNIT_AMPERE,
     UNIT_MINUTE,
     UNIT_EMPTY,
-    UNIT_FAHRENHEIT,
 )
 from esphome.components.climate import (
     ClimateMode,
