@@ -231,7 +231,7 @@ protected:
   uint32_t CalculateGetTime(uint8_t time);
   static float CalculateTemp(uint8_t byte);
   static float F2C(float in);
-  static float C2C(float in);
+  static float C2F(float in);
   bool reports_fahrenheit_{false};
 };
 
