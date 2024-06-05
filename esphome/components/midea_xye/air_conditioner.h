@@ -191,6 +191,7 @@ public:
   void set_supported_presets(const std::set<ClimatePreset> &presets) { this->supported_presets_ = presets; }
   void set_custom_presets(const std::set<std::string> &presets) { this->supported_custom_presets_ = presets; }
   void set_custom_fan_modes(const std::set<std::string> &modes) { this->supported_custom_fan_modes_ = modes; }
+  void set_reports_fahrenheit() { this->reports_fahrenheit_ = true; }
 
   uint8_t TXData[TX_LEN];
   uint8_t RXData[RX_LEN];
@@ -229,6 +230,9 @@ protected:
   uint8_t CalculateSetTime(uint32_t time);
   uint32_t CalculateGetTime(uint8_t time);
   static float CalculateTemp(uint8_t byte);
+  static float F2C(float in);
+  static float C2C(float in);
+  bool reports_fahrenheit_{false};
 };
 
 }  // namespace ac

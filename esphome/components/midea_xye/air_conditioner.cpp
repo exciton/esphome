@@ -122,7 +122,12 @@ void AirConditioner::update() {
         default: TXData[7] =  FAN_MODE_AUTO;     
       }
       //set temp 
-      TXData[8] =  this->target_temperature;
+      if(this->reports_fahrenheit_) {
+        TXData[8] = C2F(this->target_temperature);
+      }
+      else {
+        TXData[8] =  this->target_temperature;
+        }
       //set mode flags
       TXData[12] = \
         ( (this->preset == ClimatePreset::CLIMATE_PRESET_BOOST) * MODE_FLAG_AUX_HEAT) \
@@ -223,7 +228,11 @@ void AirConditioner::ParseResponse()
 
     bool need_publish = false;
     
-    update_property(this->current_temperature, (float)CalculateTemp(RXData[RX_BYTE_T1_TEMP]), need_publish);
+    if(this->reports_fahrenheit_) {
+      update_property(this->current_temperature, F2C(RXData[RX_BYTE_T1_TEMP]), need_publish);
+    } else {
+      update_property(this->current_temperature, (float)CalculateTemp(RXData[RX_BYTE_T1_TEMP]), need_publish);
+    }
     update_property(this->mode, mode, need_publish);
     if( mode != ClimateMode::CLIMATE_MODE_OFF) //Don't update below states unless mode is an ON state
     {
@@ -232,8 +241,11 @@ void AirConditioner::ParseResponse()
 
     if( mode != ClimateMode::CLIMATE_MODE_OFF || ForceReadNextCycle == 1) //Don't update below states unless mode is an ON state
     {
-      
-      update_property(this->target_temperature, (float)RXData[RX_BYTE_SET_TEMP], need_publish);
+      if(this->reports_fahrenheit_) {
+        update_property(this->target_temperature, F2C(RXData[RX_BYTE_SET_TEMP], need_publish);
+      } else {
+        update_property(this->target_temperature, (float)RXData[RX_BYTE_SET_TEMP], need_publish);
+      }
       //Don't update fan mode when we set it to auto
       //It seems the heatpump doesn't report back Auto mode - it reports back the current mode
       if(this->fan_mode != fan_mode && this->fan_mode != ClimateFanMode::CLIMATE_FAN_AUTO)
@@ -253,9 +265,16 @@ void AirConditioner::ParseResponse()
     if (need_publish)
       this->publish_state();
 
-    set_sensor(this->outdoor_sensor_, CalculateTemp(RXData[RX_BYTE_T3_TEMP]) );
-    set_sensor(this->temperature_2a_sensor_, CalculateTemp(RXData[RX_BYTE_T2A_TEMP]));
-    set_sensor(this->temperature_2b_sensor_, CalculateTemp(RXData[RX_BYTE_T2B_TEMP]));
+    if(this->reports_fahrenheit_) {
+      set_sensor(this->outdoor_sensor_, F2C(RXData[RX_BYTE_T3_TEMP]) );
+      set_sensor(this->temperature_2a_sensor_, F2C(RXData[RX_BYTE_T2A_TEMP]));
+      set_sensor(this->temperature_2b_sensor_, F2C(RXData[RX_BYTE_T2B_TEMP]));
+    } else {
+      set_sensor(this->outdoor_sensor_, CalculateTemp(RXData[RX_BYTE_T3_TEMP]) );
+      set_sensor(this->temperature_2a_sensor_, CalculateTemp(RXData[RX_BYTE_T2A_TEMP]));
+      set_sensor(this->temperature_2b_sensor_, CalculateTemp(RXData[RX_BYTE_T2B_TEMP]));
+    }
+    
     set_sensor(this->current_sensor_, RXData[RX_BYTE_CURRENT]);
     set_sensor(this->timer_start_sensor_, CalculateGetTime(RXData[RX_BYTE_TIMER_START]));
     set_sensor(this->timer_stop_sensor_, CalculateGetTime(RXData[RX_BYTE_TIMER_STOP]));
@@ -349,8 +368,18 @@ uint32_t AirConditioner::CalculateGetTime(uint8_t time)
 }
 
 float AirConditioner::CalculateTemp(uint8_t byte) {
-  //return (byte-0x30)/2.0;
-  return byte;
+  return (byte-0x30)/2.0;
+  //return byte;
+}
+
+float AirConditioner::C2F(float in)
+{
+  return in*1.8 + 32;
+}
+
+float AirConditioner::F2C(float in)
+{
+  return (f-32)/1.8;
 }
 
 ClimateTraits AirConditioner::traits() {
