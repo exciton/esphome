@@ -229,7 +229,7 @@ void AirConditioner::ParseResponse()
     bool need_publish = false;
     
     if(this->reports_fahrenheit_) {
-      update_property(this->current_temperature, F2C(RXData[RX_BYTE_T1_TEMP]), need_publish);
+      update_property(this->current_temperature, F2C((float)RXData[RX_BYTE_T1_TEMP]), need_publish);
     } else {
       update_property(this->current_temperature, (float)CalculateTemp(RXData[RX_BYTE_T1_TEMP]), need_publish);
     }
@@ -242,7 +242,7 @@ void AirConditioner::ParseResponse()
     if( mode != ClimateMode::CLIMATE_MODE_OFF || ForceReadNextCycle == 1) //Don't update below states unless mode is an ON state
     {
       if(this->reports_fahrenheit_) {
-        update_property(this->target_temperature, F2C(RXData[RX_BYTE_SET_TEMP], need_publish);
+        update_property(this->target_temperature, F2C((float)RXData[RX_BYTE_SET_TEMP], need_publish);
       } else {
         update_property(this->target_temperature, (float)RXData[RX_BYTE_SET_TEMP], need_publish);
       }
@@ -266,9 +266,9 @@ void AirConditioner::ParseResponse()
       this->publish_state();
 
     if(this->reports_fahrenheit_) {
-      set_sensor(this->outdoor_sensor_, F2C(RXData[RX_BYTE_T3_TEMP]) );
-      set_sensor(this->temperature_2a_sensor_, F2C(RXData[RX_BYTE_T2A_TEMP]));
-      set_sensor(this->temperature_2b_sensor_, F2C(RXData[RX_BYTE_T2B_TEMP]));
+      set_sensor(this->outdoor_sensor_, F2C((float)RXData[RX_BYTE_T3_TEMP]) );
+      set_sensor(this->temperature_2a_sensor_, F2C((float)RXData[RX_BYTE_T2A_TEMP]));
+      set_sensor(this->temperature_2b_sensor_, F2C((float)RXData[RX_BYTE_T2B_TEMP]));
     } else {
       set_sensor(this->outdoor_sensor_, CalculateTemp(RXData[RX_BYTE_T3_TEMP]) );
       set_sensor(this->temperature_2a_sensor_, CalculateTemp(RXData[RX_BYTE_T2A_TEMP]));
@@ -374,12 +374,12 @@ float AirConditioner::CalculateTemp(uint8_t byte) {
 
 float AirConditioner::C2F(float in)
 {
-  return in*1.8 + 32;
+  return in*1.8 + 32.0;
 }
 
 float AirConditioner::F2C(float in)
 {
-  return (f-32)/1.8;
+  return (in-32.0)/1.8;
 }
 
 ClimateTraits AirConditioner::traits() {
