@@ -123,7 +123,7 @@ void AirConditioner::update() {
       }
       //set temp 
       if(this->reports_fahrenheit_) {
-        TXData[8] = C2F(this->target_temperature);
+        TXData[8] = (uint8_t)C2F(this->target_temperature);
       }
       else {
         TXData[8] =  this->target_temperature;
@@ -242,7 +242,7 @@ void AirConditioner::ParseResponse()
     if( mode != ClimateMode::CLIMATE_MODE_OFF || ForceReadNextCycle == 1) //Don't update below states unless mode is an ON state
     {
       if(this->reports_fahrenheit_) {
-        update_property(this->target_temperature, F2C((float)RXData[RX_BYTE_SET_TEMP], need_publish);
+        update_property(this->target_temperature, F2C((float)RXData[RX_BYTE_SET_TEMP]), need_publish);
       } else {
         update_property(this->target_temperature, (float)RXData[RX_BYTE_SET_TEMP], need_publish);
       }
