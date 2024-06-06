@@ -123,7 +123,7 @@ void AirConditioner::update() {
       }
       //set temp 
       if(this->reports_fahrenheit_) {
-        TXData[8] = (uint8_t)C2F(this->target_temperature);
+        TXData[8] = (uint8_t)round(C2F(this->target_temperature));
       }
       else {
         TXData[8] =  this->target_temperature;
