@@ -93,7 +93,7 @@ void AirConditioner::update() {
     if(0==UpdateNextCycle)
     {
       //construct query command
-//      setClientCommand(CLIENT_COMMAND_QUERY);
+      setClientCommand(CLIENT_COMMAND_QUERY);
 
     }else
     {
@@ -147,14 +147,14 @@ void AirConditioner::update() {
       UpdateNextCycle=0;
     }  
 
-if(0!=UpdateNextCycle){
+//if(0!=UpdateNextCycle){
     //TODO: Reimplement flow control for manual RS485 flow control chips 
     //digitalWrite(ComControlPin, RS485_TX_PIN_VALUE);
     this->uart_->write_array(TXData, TX_LEN);
     this->uart_->flush();
     delay(this->response_timeout);
     //digitalWrite(ComControlPin, RS485_RX_PIN_VALUE);
-}
+//}
     uint8_t i = 0;
     while (this->uart_->available())
     {
