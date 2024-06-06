@@ -123,7 +123,9 @@ void AirConditioner::update() {
       }
       //set temp 
       if(this->reports_fahrenheit_) {
+        ESP_LOGE(Constants::TAG,"Target Temp: %f", this->target_temperature);
         TXData[8] = (uint8_t)round(C2F(this->target_temperature));
+        ESP_LOGE(Constants::TAG,"TXData[8]: %d", TXData[8]);
       }
       else {
         TXData[8] =  this->target_temperature;
