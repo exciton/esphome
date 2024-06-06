@@ -27,7 +27,7 @@ void AirConditioner::control(const ClimateCall &call) {
   if (call.get_mode().has_value())
     this->mode = call.get_mode().value();  
   if (call.get_target_temperature().has_value())
-    this->target_temperature = (int) call.get_target_temperature().value();
+    this->target_temperature = call.get_target_temperature().value();
   if (call.get_fan_mode().has_value())
     this->fan_mode = call.get_fan_mode().value();
   if (call.get_swing_mode().has_value())
