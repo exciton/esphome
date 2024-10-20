@@ -1,19 +1,19 @@
 import esphome.codegen as cg
-import esphome.config_validation as cv
 from esphome.components import i2c, sensor
+import esphome.config_validation as cv
 from esphome.const import (
     CONF_ID,
+    CONF_THERMOCOUPLE_TYPE,
     DEVICE_CLASS_TEMPERATURE,
     STATE_CLASS_MEASUREMENT,
     UNIT_CELSIUS,
 )
 
-CONF_THERMOCOUPLE_TYPE = "thermocouple_type"
 CONF_HOT_JUNCTION = "hot_junction"
 CONF_COLD_JUNCTION = "cold_junction"
 
 DEPENDENCIES = ["i2c"]
-CODEOWNERS = ["@MrEditor97"]
+CODEOWNERS = ["@mreditor97"]
 
 mcp9600_ns = cg.esphome_ns.namespace("mcp9600")
 MCP9600Component = mcp9600_ns.class_(

@@ -2,6 +2,7 @@
 
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
+#include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
 
 #include <array>
@@ -27,6 +28,11 @@ using namespace esp32_ble;
 
 using adv_data_t = std::vector<uint8_t>;
 
+enum AdvertisementParserType {
+  PARSED_ADVERTISEMENTS,
+  RAW_ADVERTISEMENTS,
+};
+
 struct ServiceData {
   ESPBTUUID uuid;
   adv_data_t data;
@@ -38,10 +44,10 @@ class ESPBLEiBeacon {
   ESPBLEiBeacon(const uint8_t *data);
   static optional<ESPBLEiBeacon> from_manufacturer_data(const ServiceData &data);
 
-  uint16_t get_major() { return ((this->beacon_data_.major & 0xFF) << 8) | (this->beacon_data_.major >> 8); }
-  uint16_t get_minor() { return ((this->beacon_data_.minor & 0xFF) << 8) | (this->beacon_data_.minor >> 8); }
+  uint16_t get_major() { return byteswap(this->beacon_data_.major); }
+  uint16_t get_minor() { return byteswap(this->beacon_data_.minor); }
   int8_t get_signal_power() { return this->beacon_data_.signal_power; }
-  ESPBTUUID get_uuid() { return ESPBTUUID::from_raw(this->beacon_data_.proximity_uuid); }
+  ESPBTUUID get_uuid() { return ESPBTUUID::from_raw_reversed(this->beacon_data_.proximity_uuid); }
 
  protected:
   struct {
@@ -80,6 +86,8 @@ class ESPBTDevice {
 
   const esp_ble_gap_cb_param_t::ble_scan_result_evt_param &get_scan_result() const { return scan_result_; }
 
+  bool resolve_irk(const uint8_t *irk) const;
+
   optional<ESPBLEiBeacon> get_ibeacon() const {
     for (auto &it : this->manufacturer_datas_) {
       auto res = ESPBLEiBeacon::from_manufacturer_data(it);
@@ -113,6 +121,12 @@ class ESPBTDeviceListener {
  public:
   virtual void on_scan_end() {}
   virtual bool parse_device(const ESPBTDevice &device) = 0;
+  virtual bool parse_devices(esp_ble_gap_cb_param_t::ble_scan_result_evt_param *advertisements, size_t count) {
+    return false;
+  };
+  virtual AdvertisementParserType get_advertisement_parser_type() {
+    return AdvertisementParserType::PARSED_ADVERTISEMENTS;
+  };
   void set_parent(ESP32BLETracker *parent) { parent_ = parent; }
 
  protected:
@@ -166,7 +180,11 @@ class ESPBTClient : public ESPBTDeviceListener {
   ClientState state_;
 };
 
-class ESP32BLETracker : public Component, public GAPEventHandler, public GATTcEventHandler, public Parented<ESP32BLE> {
+class ESP32BLETracker : public Component,
+                        public GAPEventHandler,
+                        public GATTcEventHandler,
+                        public BLEStatusEventHandler,
+                        public Parented<ESP32BLE> {
  public:
   void set_scan_duration(uint32_t scan_duration) { scan_duration_ = scan_duration; }
   void set_scan_interval(uint32_t scan_interval) { scan_interval_ = scan_interval; }
@@ -181,12 +199,9 @@ class ESP32BLETracker : public Component, public GAPEventHandler, public GATTcEv
 
   void loop() override;
 
-  void register_listener(ESPBTDeviceListener *listener) {
-    listener->set_parent(this);
-    this->listeners_.push_back(listener);
-  }
-
+  void register_listener(ESPBTDeviceListener *listener);
   void register_client(ESPBTClient *client);
+  void recalculate_advertisement_parser_types();
 
   void print_bt_device_info(const ESPBTDevice &device);
 
@@ -196,8 +211,10 @@ class ESP32BLETracker : public Component, public GAPEventHandler, public GATTcEv
   void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
+  void ble_before_disabled_event_handler() override;
 
  protected:
+  void stop_scan_();
   /// Start a single scan by setting up the parameters and doing some esp-idf calls.
   void start_scan_(bool first);
   /// Called when a scan ends
@@ -228,14 +245,17 @@ class ESP32BLETracker : public Component, public GAPEventHandler, public GATTcEv
   bool scan_continuous_;
   bool scan_active_;
   bool scanner_idle_;
+  bool ble_was_disabled_{true};
+  bool raw_advertisements_{false};
+  bool parse_advertisements_{false};
   SemaphoreHandle_t scan_result_lock_;
   SemaphoreHandle_t scan_end_lock_;
   size_t scan_result_index_{0};
-#if CONFIG_SPIRAM
+#ifdef USE_PSRAM
   const static u_int8_t SCAN_RESULT_BUFFER_SIZE = 32;
 #else
   const static u_int8_t SCAN_RESULT_BUFFER_SIZE = 16;
-#endif  // CONFIG_SPIRAM
+#endif  // USE_PSRAM
   esp_ble_gap_cb_param_t::ble_scan_result_evt_param *scan_result_buffer_;
   esp_bt_status_t scan_start_failed_{ESP_BT_STATUS_SUCCESS};
   esp_bt_status_t scan_set_param_failed_{ESP_BT_STATUS_SUCCESS};

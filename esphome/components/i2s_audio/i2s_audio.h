@@ -11,26 +11,35 @@ namespace i2s_audio {
 
 class I2SAudioComponent;
 
-class I2SAudioIn : public Parented<I2SAudioComponent> {};
+class I2SAudioBase : public Parented<I2SAudioComponent> {
+ public:
+  void set_i2s_mode(i2s_mode_t mode) { this->i2s_mode_ = mode; }
+  void set_channel(i2s_channel_fmt_t channel) { this->channel_ = channel; }
+  void set_sample_rate(uint32_t sample_rate) { this->sample_rate_ = sample_rate; }
+  void set_bits_per_sample(i2s_bits_per_sample_t bits_per_sample) { this->bits_per_sample_ = bits_per_sample; }
+  void set_bits_per_channel(i2s_bits_per_chan_t bits_per_channel) { this->bits_per_channel_ = bits_per_channel; }
+  void set_use_apll(uint32_t use_apll) { this->use_apll_ = use_apll; }
 
-class I2SAudioOut : public Parented<I2SAudioComponent> {};
+ protected:
+  i2s_mode_t i2s_mode_{};
+  i2s_channel_fmt_t channel_;
+  uint32_t sample_rate_;
+  i2s_bits_per_sample_t bits_per_sample_;
+  i2s_bits_per_chan_t bits_per_channel_;
+  bool use_apll_;
+};
+
+class I2SAudioIn : public I2SAudioBase {};
+
+class I2SAudioOut : public I2SAudioBase {};
 
 class I2SAudioComponent : public Component {
  public:
   void setup() override;
 
-  void register_audio_in(I2SAudioIn *in) {
-    this->audio_in_ = in;
-    in->set_parent(this);
-  }
-  void register_audio_out(I2SAudioOut *out) {
-    this->audio_out_ = out;
-    out->set_parent(this);
-  }
-
   i2s_pin_config_t get_pin_config() const {
     return {
-        .mck_io_num = I2S_PIN_NO_CHANGE,
+        .mck_io_num = this->mclk_pin_,
         .bck_io_num = this->bclk_pin_,
         .ws_io_num = this->lrclk_pin_,
         .data_out_num = I2S_PIN_NO_CHANGE,
@@ -38,8 +47,9 @@ class I2SAudioComponent : public Component {
     };
   }
 
-  void set_bclk_pin(uint8_t pin) { this->bclk_pin_ = pin; }
-  void set_lrclk_pin(uint8_t pin) { this->lrclk_pin_ = pin; }
+  void set_mclk_pin(int pin) { this->mclk_pin_ = pin; }
+  void set_bclk_pin(int pin) { this->bclk_pin_ = pin; }
+  void set_lrclk_pin(int pin) { this->lrclk_pin_ = pin; }
 
   void lock() { this->lock_.lock(); }
   bool try_lock() { return this->lock_.try_lock(); }
@@ -53,8 +63,9 @@ class I2SAudioComponent : public Component {
   I2SAudioIn *audio_in_{nullptr};
   I2SAudioOut *audio_out_{nullptr};
 
-  uint8_t bclk_pin_;
-  uint8_t lrclk_pin_;
+  int mclk_pin_{I2S_PIN_NO_CHANGE};
+  int bclk_pin_{I2S_PIN_NO_CHANGE};
+  int lrclk_pin_;
   i2s_port_t port_{};
 };
 

@@ -1,18 +1,13 @@
 import logging
-import re
 
 import esphome.config_validation as cv
 from esphome import core
-from esphome.const import CONF_SUBSTITUTIONS
+from esphome.const import CONF_SUBSTITUTIONS, VALID_SUBSTITUTIONS_CHARACTERS
 from esphome.yaml_util import ESPHomeDataBase, make_data_base
-from esphome.config_helpers import merge_config
+from esphome.config_helpers import merge_config, Extend, Remove
 
 CODEOWNERS = ["@esphome/core"]
 _LOGGER = logging.getLogger(__name__)
-
-VALID_SUBSTITUTIONS_CHARACTERS = (
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
-)
 
 
 def validate_substitution_key(value):
@@ -42,12 +37,6 @@ async def to_code(config):
     pass
 
 
-# pylint: disable=consider-using-f-string
-VARIABLE_PROG = re.compile(
-    "\\$([{0}]+|\\{{[{0}]*\\}})".format(VALID_SUBSTITUTIONS_CHARACTERS)
-)
-
-
 def _expand_substitutions(substitutions, value, path, ignore_missing):
     if "$" not in value:
         return value
@@ -56,7 +45,7 @@ def _expand_substitutions(substitutions, value, path, ignore_missing):
 
     i = 0
     while True:
-        m = VARIABLE_PROG.search(value, i)
+        m = cv.VARIABLE_PROG.search(value, i)
         if not m:
             # Nothing more to match. Done
             break
@@ -116,7 +105,7 @@ def _substitute_item(substitutions, item, path, ignore_missing):
         sub = _expand_substitutions(substitutions, item, path, ignore_missing)
         if sub != item:
             return sub
-    elif isinstance(item, core.Lambda):
+    elif isinstance(item, (core.Lambda, Extend, Remove)):
         sub = _expand_substitutions(substitutions, item.value, path, ignore_missing)
         if sub != item:
             item.value = sub
@@ -127,7 +116,7 @@ def do_substitution_pass(config, command_line_substitutions, ignore_missing=Fals
     if CONF_SUBSTITUTIONS not in config and not command_line_substitutions:
         return
 
-    substitutions = config[CONF_SUBSTITUTIONS]
+    substitutions = config.get(CONF_SUBSTITUTIONS)
     if substitutions is None:
         substitutions = command_line_substitutions
     elif command_line_substitutions:

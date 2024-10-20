@@ -1,44 +1,51 @@
-import esphome.codegen as cg
-import esphome.config_validation as cv
-import esphome.final_validate as fv
 from esphome import automation
 from esphome.automation import Condition
+import esphome.codegen as cg
+from esphome.components.esp32 import add_idf_sdkconfig_option, const, get_esp32_variant
+from esphome.components.network import IPAddress
+import esphome.config_validation as cv
 from esphome.const import (
     CONF_AP,
     CONF_BSSID,
+    CONF_CERTIFICATE,
+    CONF_CERTIFICATE_AUTHORITY,
     CONF_CHANNEL,
     CONF_DNS1,
     CONF_DNS2,
     CONF_DOMAIN,
+    CONF_EAP,
     CONF_ENABLE_BTM,
+    CONF_ENABLE_ON_BOOT,
     CONF_ENABLE_RRM,
     CONF_FAST_CONNECT,
     CONF_GATEWAY,
     CONF_HIDDEN,
     CONF_ID,
+    CONF_IDENTITY,
+    CONF_KEY,
     CONF_MANUAL_IP,
     CONF_NETWORKS,
+    CONF_ON_CONNECT,
+    CONF_ON_DISCONNECT,
     CONF_PASSWORD,
     CONF_POWER_SAVE_MODE,
+    CONF_PRIORITY,
     CONF_REBOOT_TIMEOUT,
     CONF_SSID,
     CONF_STATIC_IP,
     CONF_SUBNET,
+    CONF_TTLS_PHASE_2,
     CONF_USE_ADDRESS,
-    CONF_PRIORITY,
-    CONF_IDENTITY,
-    CONF_CERTIFICATE_AUTHORITY,
-    CONF_CERTIFICATE,
-    CONF_KEY,
     CONF_USERNAME,
-    CONF_EAP,
 )
 from esphome.core import CORE, HexInt, coroutine_with_priority
-from esphome.components.esp32 import add_idf_sdkconfig_option
-from esphome.components.network import IPAddress
+import esphome.final_validate as fv
+
 from . import wpa2_eap
 
 AUTO_LOAD = ["network"]
+
+NO_WIFI_VARIANTS = [const.VARIANT_ESP32H2]
 
 wifi_ns = cg.esphome_ns.namespace("wifi")
 EAPAuth = wifi_ns.struct("EAPAuth")
@@ -53,6 +60,9 @@ WIFI_POWER_SAVE_MODES = {
     "HIGH": WiFiPowerSaveMode.WIFI_POWER_SAVE_HIGH,
 }
 WiFiConnectedCondition = wifi_ns.class_("WiFiConnectedCondition", Condition)
+WiFiEnabledCondition = wifi_ns.class_("WiFiEnabledCondition", Condition)
+WiFiEnableAction = wifi_ns.class_("WiFiEnableAction", automation.Action)
+WiFiDisableAction = wifi_ns.class_("WiFiDisableAction", automation.Action)
 
 
 def validate_password(value):
@@ -90,6 +100,14 @@ STA_MANUAL_IP_SCHEMA = AP_MANUAL_IP_SCHEMA.extend(
     }
 )
 
+TTLS_PHASE_2 = {
+    "pap": cg.global_ns.ESP_EAP_TTLS_PHASE2_PAP,
+    "chap": cg.global_ns.ESP_EAP_TTLS_PHASE2_CHAP,
+    "mschap": cg.global_ns.ESP_EAP_TTLS_PHASE2_MSCHAP,
+    "mschapv2": cg.global_ns.ESP_EAP_TTLS_PHASE2_MSCHAPV2,
+    "eap": cg.global_ns.ESP_EAP_TTLS_PHASE2_EAP,
+}
+
 EAP_AUTH_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -97,6 +115,9 @@ EAP_AUTH_SCHEMA = cv.All(
             cv.Optional(CONF_USERNAME): cv.string_strict,
             cv.Optional(CONF_PASSWORD): cv.string_strict,
             cv.Optional(CONF_CERTIFICATE_AUTHORITY): wpa2_eap.validate_certificate,
+            cv.SplitDefault(CONF_TTLS_PHASE_2, esp32_idf="mschapv2"): cv.All(
+                cv.enum(TTLS_PHASE_2), cv.only_with_esp_idf
+            ),
             cv.Inclusive(
                 CONF_CERTIFICATE, "certificate_and_key"
             ): wpa2_eap.validate_certificate,
@@ -143,6 +164,13 @@ WIFI_NETWORK_STA = WIFI_NETWORK_BASE.extend(
         cv.Optional(CONF_EAP): EAP_AUTH_SCHEMA,
     }
 )
+
+
+def validate_variant(_):
+    if CORE.is_esp32:
+        variant = get_esp32_variant()
+        if variant in NO_WIFI_VARIANTS:
+            raise cv.Invalid(f"{variant} does not support WiFi")
 
 
 def final_validate(config):
@@ -196,6 +224,7 @@ FINAL_VALIDATE_SCHEMA = cv.All(
         extra=cv.ALLOW_EXTRA,
     ),
     final_validate,
+    validate_variant,
 )
 
 
@@ -268,7 +297,12 @@ CONFIG_SCHEMA = cv.All(
                 CONF_REBOOT_TIMEOUT, default="15min"
             ): cv.positive_time_period_milliseconds,
             cv.SplitDefault(
-                CONF_POWER_SAVE_MODE, esp8266="none", esp32="light", rp2040="light"
+                CONF_POWER_SAVE_MODE,
+                esp8266="none",
+                esp32="light",
+                rp2040="light",
+                bk72xx="none",
+                rtl87xx="none",
             ): cv.enum(WIFI_POWER_SAVE_MODES, upper=True),
             cv.Optional(CONF_FAST_CONNECT, default=False): cv.boolean,
             cv.Optional(CONF_USE_ADDRESS): cv.string_strict,
@@ -285,6 +319,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional("enable_mdns"): cv.invalid(
                 "This option has been removed. Please use the [disabled] option under the "
                 "new mdns component instead."
+            ),
+            cv.Optional(CONF_ENABLE_ON_BOOT, default=True): cv.boolean,
+            cv.Optional(CONF_ON_CONNECT): automation.validate_automation(single=True),
+            cv.Optional(CONF_ON_DISCONNECT): automation.validate_automation(
+                single=True
             ),
         }
     ),
@@ -312,6 +351,7 @@ def eap_auth(config):
         ("ca_cert", ca_cert),
         ("client_cert", client_cert),
         ("client_key", key),
+        ("ttls_phase_2", config.get(CONF_TTLS_PHASE_2)),
     )
 
 
@@ -377,6 +417,10 @@ async def to_code(config):
             lambda ap: cg.add(var.set_ap(wifi_network(conf, ap, ip_config))),
         )
         cg.add(var.set_ap_timeout(conf[CONF_AP_TIMEOUT]))
+        cg.add_define("USE_WIFI_AP")
+    elif CORE.is_esp32 and CORE.using_esp_idf:
+        add_idf_sdkconfig_option("CONFIG_ESP_WIFI_SOFTAP_SUPPORT", False)
+        add_idf_sdkconfig_option("CONFIG_LWIP_DHCPS", False)
 
     cg.add(var.set_reboot_timeout(config[CONF_REBOOT_TIMEOUT]))
     cg.add(var.set_power_save_mode(config[CONF_POWER_SAVE_MODE]))
@@ -384,6 +428,8 @@ async def to_code(config):
     cg.add(var.set_passive_scan(config[CONF_PASSIVE_SCAN]))
     if CONF_OUTPUT_POWER in config:
         cg.add(var.set_output_power(config[CONF_OUTPUT_POWER]))
+
+    cg.add(var.set_enable_on_boot(config[CONF_ENABLE_ON_BOOT]))
 
     if CORE.is_esp8266:
         cg.add_library("ESP8266WiFi", None)
@@ -403,10 +449,37 @@ async def to_code(config):
 
     cg.add_define("USE_WIFI")
 
-    # Register at end for OTA safe mode
+    # must register before OTA safe mode check
     await cg.register_component(var, config)
+
+    await cg.past_safe_mode()
+
+    if on_connect_config := config.get(CONF_ON_CONNECT):
+        await automation.build_automation(
+            var.get_connect_trigger(), [], on_connect_config
+        )
+
+    if on_disconnect_config := config.get(CONF_ON_DISCONNECT):
+        await automation.build_automation(
+            var.get_disconnect_trigger(), [], on_disconnect_config
+        )
 
 
 @automation.register_condition("wifi.connected", WiFiConnectedCondition, cv.Schema({}))
 async def wifi_connected_to_code(config, condition_id, template_arg, args):
     return cg.new_Pvariable(condition_id, template_arg)
+
+
+@automation.register_condition("wifi.enabled", WiFiEnabledCondition, cv.Schema({}))
+async def wifi_enabled_to_code(config, condition_id, template_arg, args):
+    return cg.new_Pvariable(condition_id, template_arg)
+
+
+@automation.register_action("wifi.enable", WiFiEnableAction, cv.Schema({}))
+async def wifi_enable_to_code(config, action_id, template_arg, args):
+    return cg.new_Pvariable(action_id, template_arg)
+
+
+@automation.register_action("wifi.disable", WiFiDisableAction, cv.Schema({}))
+async def wifi_disable_to_code(config, action_id, template_arg, args):
+    return cg.new_Pvariable(action_id, template_arg)

@@ -1,15 +1,19 @@
 import codecs
 from contextlib import suppress
-
 import logging
 import os
 from pathlib import Path
-from typing import Union
-import tempfile
-from urllib.parse import urlparse
+import platform
 import re
+import tempfile
+from typing import Union
+from urllib.parse import urlparse
 
 _LOGGER = logging.getLogger(__name__)
+
+IS_MACOS = platform.system() == "Darwin"
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
 
 
 def ensure_unique_string(preferred_string, current_strings):
@@ -124,8 +128,9 @@ def _resolve_with_zeroconf(host):
 
 
 def resolve_ip_address(host):
-    from esphome.core import EsphomeError
     import socket
+
+    from esphome.core import EsphomeError
 
     errs = []
 
@@ -144,7 +149,22 @@ def resolve_ip_address(host):
 
 
 def get_bool_env(var, default=False):
-    return bool(os.getenv(var, default))
+    value = os.getenv(var, default)
+    if isinstance(value, str):
+        value = value.lower()
+        if value in ["1", "true"]:
+            return True
+        if value in ["0", "false"]:
+            return False
+    return bool(value)
+
+
+def get_str_env(var, default=None):
+    return str(os.getenv(var, default))
+
+
+def get_int_env(var, default=0):
+    return int(os.getenv(var, default))
 
 
 def is_ha_addon():
@@ -342,6 +362,9 @@ def snake_case(value):
     return value.replace(" ", "_").lower()
 
 
+_DISALLOWED_CHARS = re.compile(r"[^a-zA-Z0-9-_]")
+
+
 def sanitize(value):
     """Same behaviour as `helpers.cpp` method `str_sanitize`."""
-    return re.sub("[^-_0-9a-zA-Z]", r"", value)
+    return _DISALLOWED_CHARS.sub("_", value)

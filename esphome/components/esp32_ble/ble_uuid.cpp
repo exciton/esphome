@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cinttypes>
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -28,6 +29,13 @@ ESPBTUUID ESPBTUUID::from_raw(const uint8_t *data) {
   ESPBTUUID ret;
   ret.uuid_.len = ESP_UUID_LEN_128;
   memcpy(ret.uuid_.uuid.uuid128, data, ESP_UUID_LEN_128);
+  return ret;
+}
+ESPBTUUID ESPBTUUID::from_raw_reversed(const uint8_t *data) {
+  ESPBTUUID ret;
+  ret.uuid_.len = ESP_UUID_LEN_128;
+  for (int i = 0; i < ESP_UUID_LEN_128; i++)
+    ret.uuid_.uuid.uuid128[ESP_UUID_LEN_128 - 1 - i] = data[i];
   return ret;
 }
 ESPBTUUID ESPBTUUID::from_raw(const std::string &data) {
@@ -166,7 +174,7 @@ std::string ESPBTUUID::to_string() const {
     case ESP_UUID_LEN_16:
       return str_snprintf("0x%02X%02X", 6, this->uuid_.uuid.uuid16 >> 8, this->uuid_.uuid.uuid16 & 0xff);
     case ESP_UUID_LEN_32:
-      return str_snprintf("0x%02X%02X%02X%02X", 10, this->uuid_.uuid.uuid32 >> 24,
+      return str_snprintf("0x%02" PRIX32 "%02" PRIX32 "%02" PRIX32 "%02" PRIX32, 10, (this->uuid_.uuid.uuid32 >> 24),
                           (this->uuid_.uuid.uuid32 >> 16 & 0xff), (this->uuid_.uuid.uuid32 >> 8 & 0xff),
                           this->uuid_.uuid.uuid32 & 0xff);
     default:

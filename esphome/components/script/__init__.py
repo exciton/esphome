@@ -2,7 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
 from esphome.automation import maybe_simple_id
-from esphome.const import CONF_ID, CONF_MODE, CONF_PARAMETERS
+from esphome.const import CONF_ID, CONF_MODE, CONF_PARAMETERS, CONF_RESTART
 from esphome.core import CORE, EsphomeError
 
 CODEOWNERS = ["@esphome/core"]
@@ -19,7 +19,6 @@ ParallelScript = script_ns.class_("ParallelScript", Script)
 
 CONF_SCRIPT = "script"
 CONF_SINGLE = "single"
-CONF_RESTART = "restart"
 CONF_QUEUED = "queued"
 CONF_PARALLEL = "parallel"
 CONF_MAX_RUNS = "max_runs"
@@ -33,6 +32,7 @@ SCRIPT_MODES = {
 
 PARAMETER_TYPE_TRANSLATIONS = {
     "string": "std::string",
+    "boolean": "bool",
 }
 
 
@@ -88,7 +88,7 @@ def validate_parameter_name(value):
     raise cv.Invalid(f"Script's parameter name cannot be {CONF_ID}")
 
 
-ALLOWED_PARAM_TYPE_CHARSET = set("abcdefghijklmnopqrstuvwxyz0123456789_:*&[]")
+ALLOWED_PARAM_TYPE_CHARSET = set("abcdefghijklmnopqrstuvwxyz0123456789_:*&[]<>")
 
 
 def validate_parameter_type(value):
@@ -149,6 +149,16 @@ async def to_code(config):
     ),
 )
 async def script_execute_action_to_code(config, action_id, template_arg, args):
+    def convert(type: str):
+        def converter(value):
+            if type == "std::string":
+                return value
+            if type == "bool":
+                return cg.RawExpression(str(value).lower())
+            return cg.RawExpression(str(value))
+
+        return converter
+
     async def get_ordered_args(config, script_params):
         config_args = config.copy()
         config_args.pop(CONF_ID)
@@ -160,7 +170,9 @@ async def script_execute_action_to_code(config, action_id, template_arg, args):
                 raise EsphomeError(
                     f"Missing parameter: '{name}' in script.execute {config[CONF_ID]}"
                 )
-            arg = await cg.templatable(config_args[name], args, type)
+            arg = await cg.templatable(
+                config_args[name], args, type, convert(str(type))
+            )
             script_args.append(arg)
         return script_args
 

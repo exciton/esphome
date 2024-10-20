@@ -2,6 +2,7 @@ import difflib
 import itertools
 
 import voluptuous as vol
+
 from esphome.schema_extractors import schema_extractor_extended
 
 
@@ -64,7 +65,7 @@ class _Schema(vol.Schema):
 
         # Recursively compile schema
         _compiled_schema = {}
-        for skey, svalue in vol.iteritems(schema):
+        for skey, svalue in schema.items():
             new_key = self._compile(skey)
             new_value = self._compile(svalue)
             _compiled_schema[skey] = (new_key, new_value)
@@ -203,6 +204,11 @@ class _Schema(vol.Schema):
         self._extra_schemas.append(validator)
         return self
 
+    def prepend_extra(self, validator):
+        validator = _Schema(validator)
+        self._extra_schemas.insert(0, validator)
+        return self
+
     @schema_extractor_extended
     def extend(self, *schemas, **kwargs):
         extra = kwargs.pop("extra", None)
@@ -220,4 +226,6 @@ class _Schema(vol.Schema):
         if isinstance(schema, vol.Schema):
             schema = schema.schema
         ret = super().extend(schema, extra=extra)
-        return _Schema(ret.schema, extra=ret.extra, extra_schemas=self._extra_schemas)
+        return _Schema(
+            ret.schema, extra=ret.extra, extra_schemas=self._extra_schemas.copy()
+        )

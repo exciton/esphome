@@ -23,7 +23,7 @@ enum I2SState : uint8_t {
   I2S_STATE_STOPPING,
 };
 
-class I2SAudioMediaPlayer : public Component, public media_player::MediaPlayer, public I2SAudioOut {
+class I2SAudioMediaPlayer : public Component, public Parented<I2SAudioComponent>, public media_player::MediaPlayer {
  public:
   void setup() override;
   float get_setup_priority() const override { return esphome::setup_priority::LATE; }
@@ -38,6 +38,8 @@ class I2SAudioMediaPlayer : public Component, public media_player::MediaPlayer, 
   void set_internal_dac_mode(i2s_dac_mode_t mode) { this->internal_dac_mode_ = mode; }
 #endif
   void set_external_dac_channels(uint8_t channels) { this->external_dac_channels_ = channels; }
+
+  void set_i2s_comm_fmt_lsb(bool lsb) { this->i2s_comm_fmt_lsb_ = lsb; }
 
   media_player::MediaPlayerTraits get_traits() override;
 
@@ -71,9 +73,12 @@ class I2SAudioMediaPlayer : public Component, public media_player::MediaPlayer, 
 #endif
   uint8_t external_dac_channels_;
 
+  bool i2s_comm_fmt_lsb_;
+
   HighFrequencyLoopRequester high_freq_;
 
   optional<std::string> current_url_{};
+  bool is_announcement_{false};
 };
 
 }  // namespace i2s_audio

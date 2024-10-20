@@ -5,13 +5,14 @@
 #include "esphome/core/optional.h"
 #include "headers.h"
 
+#if defined(USE_SOCKET_IMPL_LWIP_TCP) || defined(USE_SOCKET_IMPL_LWIP_SOCKETS) || defined(USE_SOCKET_IMPL_BSD_SOCKETS)
 namespace esphome {
 namespace socket {
 
 class Socket {
  public:
   Socket() = default;
-  virtual ~Socket() = default;
+  virtual ~Socket();
   Socket(const Socket &) = delete;
   Socket &operator=(const Socket &) = delete;
 
@@ -31,10 +32,13 @@ class Socket {
   virtual int setsockopt(int level, int optname, const void *optval, socklen_t optlen) = 0;
   virtual int listen(int backlog) = 0;
   virtual ssize_t read(void *buf, size_t len) = 0;
+#ifdef USE_SOCKET_IMPL_BSD_SOCKETS
+  virtual ssize_t recvfrom(void *buf, size_t len, sockaddr *addr, socklen_t *addr_len) = 0;
+#endif
   virtual ssize_t readv(const struct iovec *iov, int iovcnt) = 0;
   virtual ssize_t write(const void *buf, size_t len) = 0;
   virtual ssize_t writev(const struct iovec *iov, int iovcnt) = 0;
-  virtual ssize_t sendto(const void *buf, size_t len, int flags, const struct sockaddr *to, socklen_t tolen);
+  virtual ssize_t sendto(const void *buf, size_t len, int flags, const struct sockaddr *to, socklen_t tolen) = 0;
 
   virtual int setblocking(bool blocking) = 0;
   virtual int loop() { return 0; };
@@ -54,3 +58,4 @@ socklen_t set_sockaddr_any(struct sockaddr *addr, socklen_t addrlen, uint16_t po
 
 }  // namespace socket
 }  // namespace esphome
+#endif
