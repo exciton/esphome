@@ -35,13 +35,13 @@ void Modbus::loop() {
       ESP_LOGV(TAG, "Clearing buffer of %d bytes - timeout", at);
       this->rx_buffer_.clear();
     }
-  }
 
-  // stop blocking new send commands after sent_wait_time_ ms regardless if a response has been received since then
-  if (now - this->last_send_ > send_wait_time_) {
-    if (waiting_for_response > 0)
-      ESP_LOGV(TAG, "Stop waiting for response from %d", waiting_for_response);
-    waiting_for_response = 0;
+    // stop blocking new send commands after sent_wait_time_ ms after response received
+    if (now - this->last_send_ > send_wait_time_) {
+      if (waiting_for_response > 0)
+        ESP_LOGV(TAG, "Stop waiting for response from %d", waiting_for_response);
+      waiting_for_response = 0;
+    }
   }
 
 }
