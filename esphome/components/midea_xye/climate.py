@@ -54,6 +54,7 @@ CONF_ERROR_FLAGS = "error_flags"
 CONF_PROTECT_FLAGS = "protect_flags"
 CONF_POWER_USAGE = "power_usage"
 CONF_HUMIDITY_SETPOINT = "humidity_setpoint"
+CONF_REPORTS_FAHRENHEIT = "reports_fahrenheit"
 midea_ac_ns = cg.esphome_ns.namespace("midea").namespace("ac")
 AirConditioner = midea_ac_ns.class_("AirConditioner", climate.Climate, cg.Component)
 Capabilities = midea_ac_ns.namespace("Constants")
@@ -211,6 +212,7 @@ CONFIG_SCHEMA = cv.All(
                 device_class=DEVICE_CLASS_HUMIDITY,
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
+            cv.Optional(CONF_REPORTS_FAHRENHEIT, default=False): cv.boolean,
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -374,4 +376,6 @@ async def to_code(config):
     if CONF_HUMIDITY_SETPOINT in config:
         sens = await sensor.new_sensor(config[CONF_HUMIDITY_SETPOINT])
         cg.add(var.set_humidity_setpoint_sensor(sens))
+    if config[CONF_REPORTS_FAHRENHEIT]:
+        cg.add(var.set_reports_fahrenheit())
     #cg.add_library("dudanov/MideaUART", "1.1.8")
