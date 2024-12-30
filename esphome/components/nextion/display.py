@@ -13,6 +13,7 @@ from esphome.const import (
 from esphome.core import CORE
 from . import Nextion, nextion_ns, nextion_ref
 from .base_component import (
+    CONF_ON_BUFFER_OVERFLOW,
     CONF_ON_SLEEP,
     CONF_ON_WAKE,
     CONF_ON_SETUP,
@@ -23,6 +24,7 @@ from .base_component import (
     CONF_START_UP_PAGE,
     CONF_AUTO_WAKE_ON_TOUCH,
     CONF_EXIT_REPARSE_ON_START,
+    CONF_SKIP_CONNECTION_HANDSHAKE,
 )
 
 CODEOWNERS = ["@senexcrenshaw", "@edwardtfn"]
@@ -35,6 +37,9 @@ SleepTrigger = nextion_ns.class_("SleepTrigger", automation.Trigger.template())
 WakeTrigger = nextion_ns.class_("WakeTrigger", automation.Trigger.template())
 PageTrigger = nextion_ns.class_("PageTrigger", automation.Trigger.template())
 TouchTrigger = nextion_ns.class_("TouchTrigger", automation.Trigger.template())
+BufferOverflowTrigger = nextion_ns.class_(
+    "BufferOverflowTrigger", automation.Trigger.template()
+)
 
 CONFIG_SCHEMA = (
     display.BASIC_DISPLAY_SCHEMA.extend(
@@ -67,11 +72,19 @@ CONFIG_SCHEMA = (
                     cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(TouchTrigger),
                 }
             ),
+            cv.Optional(CONF_ON_BUFFER_OVERFLOW): automation.validate_automation(
+                {
+                    cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(
+                        BufferOverflowTrigger
+                    ),
+                }
+            ),
             cv.Optional(CONF_TOUCH_SLEEP_TIMEOUT): cv.int_range(min=3, max=65535),
             cv.Optional(CONF_WAKE_UP_PAGE): cv.uint8_t,
             cv.Optional(CONF_START_UP_PAGE): cv.uint8_t,
             cv.Optional(CONF_AUTO_WAKE_ON_TOUCH, default=True): cv.boolean,
             cv.Optional(CONF_EXIT_REPARSE_ON_START, default=False): cv.boolean,
+            cv.Optional(CONF_SKIP_CONNECTION_HANDSHAKE, default=False): cv.boolean,
         }
     )
     .extend(cv.polling_component_schema("5s"))
@@ -106,17 +119,19 @@ async def to_code(config):
             cg.add_library("ESP8266HTTPClient", None)
 
     if CONF_TOUCH_SLEEP_TIMEOUT in config:
-        cg.add(var.set_touch_sleep_timeout_internal(config[CONF_TOUCH_SLEEP_TIMEOUT]))
+        cg.add(var.set_touch_sleep_timeout(config[CONF_TOUCH_SLEEP_TIMEOUT]))
 
     if CONF_WAKE_UP_PAGE in config:
-        cg.add(var.set_wake_up_page_internal(config[CONF_WAKE_UP_PAGE]))
+        cg.add(var.set_wake_up_page(config[CONF_WAKE_UP_PAGE]))
 
     if CONF_START_UP_PAGE in config:
-        cg.add(var.set_start_up_page_internal(config[CONF_START_UP_PAGE]))
+        cg.add(var.set_start_up_page(config[CONF_START_UP_PAGE]))
 
-    cg.add(var.set_auto_wake_on_touch_internal(config[CONF_AUTO_WAKE_ON_TOUCH]))
+    cg.add(var.set_auto_wake_on_touch(config[CONF_AUTO_WAKE_ON_TOUCH]))
 
-    cg.add(var.set_exit_reparse_on_start_internal(config[CONF_EXIT_REPARSE_ON_START]))
+    cg.add(var.set_exit_reparse_on_start(config[CONF_EXIT_REPARSE_ON_START]))
+
+    cg.add(var.set_skip_connection_handshake(config[CONF_SKIP_CONNECTION_HANDSHAKE]))
 
     await display.register_display(var, config)
 
@@ -147,3 +162,7 @@ async def to_code(config):
             ],
             conf,
         )
+
+    for conf in config.get(CONF_ON_BUFFER_OVERFLOW, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [], conf)

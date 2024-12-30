@@ -80,15 +80,7 @@ bool OnlineImage::resize_(int width_in, int height_in) {
     this->width_ = width;
     ESP_LOGD(TAG, "New size: (%d, %d)", width, height);
   } else {
-#if defined(USE_ESP8266)
-    // NOLINTNEXTLINE(readability-static-accessed-through-instance)
-    int max_block = ESP.getMaxFreeBlockSize();
-#elif defined(USE_ESP32)
-    int max_block = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-#else
-    int max_block = -1;
-#endif
-    ESP_LOGE(TAG, "allocation failed. Biggest block in heap: %d Bytes", max_block);
+    ESP_LOGE(TAG, "allocation failed. Biggest block in heap: %zu Bytes", this->allocator_.get_max_free_block_size());
     this->end_connection_();
     return false;
   }
@@ -215,16 +207,10 @@ void OnlineImage::draw_pixel_(int x, int y, Color color) {
     }
     case ImageType::IMAGE_TYPE_RGB565: {
       uint16_t col565 = display::ColorUtil::color_to_565(color);
-      if (this->has_transparency()) {
-        if (col565 == 0x0020) {
-          col565 = 0;
-        }
-        if (color.w < 0x80) {
-          col565 = 0x0020;
-        }
-      }
       this->buffer_[pos + 0] = static_cast<uint8_t>((col565 >> 8) & 0xFF);
       this->buffer_[pos + 1] = static_cast<uint8_t>(col565 & 0xFF);
+      if (this->has_transparency())
+        this->buffer_[pos + 2] = color.w;
       break;
     }
     case ImageType::IMAGE_TYPE_RGBA: {

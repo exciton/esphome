@@ -16,21 +16,38 @@ from .. import (
     register_i2s_audio_component,
 )
 
-CODEOWNERS = ["@jesserockz"]
+AUTO_LOAD = ["audio"]
+CODEOWNERS = ["@jesserockz", "@kahrendt"]
 DEPENDENCIES = ["i2s_audio"]
 
 I2SAudioSpeaker = i2s_audio_ns.class_(
     "I2SAudioSpeaker", cg.Component, speaker.Speaker, I2SAudioOut
 )
 
-
+CONF_BUFFER_DURATION = "buffer_duration"
 CONF_DAC_TYPE = "dac_type"
+CONF_I2S_COMM_FMT = "i2s_comm_fmt"
+CONF_NEVER = "never"
 
 i2s_dac_mode_t = cg.global_ns.enum("i2s_dac_mode_t")
 INTERNAL_DAC_OPTIONS = {
     CONF_LEFT: i2s_dac_mode_t.I2S_DAC_CHANNEL_LEFT_EN,
     CONF_RIGHT: i2s_dac_mode_t.I2S_DAC_CHANNEL_RIGHT_EN,
     CONF_STEREO: i2s_dac_mode_t.I2S_DAC_CHANNEL_BOTH_EN,
+}
+
+i2s_comm_format_t = cg.global_ns.enum("i2s_comm_format_t")
+I2C_COMM_FMT_OPTIONS = {
+    "stand_i2s": i2s_comm_format_t.I2S_COMM_FORMAT_STAND_I2S,
+    "stand_msb": i2s_comm_format_t.I2S_COMM_FORMAT_STAND_MSB,
+    "stand_pcm_short": i2s_comm_format_t.I2S_COMM_FORMAT_STAND_PCM_SHORT,
+    "stand_pcm_long": i2s_comm_format_t.I2S_COMM_FORMAT_STAND_PCM_LONG,
+    "stand_max": i2s_comm_format_t.I2S_COMM_FORMAT_STAND_MAX,
+    "i2s_msb": i2s_comm_format_t.I2S_COMM_FORMAT_I2S_MSB,
+    "i2s_lsb": i2s_comm_format_t.I2S_COMM_FORMAT_I2S_LSB,
+    "pcm": i2s_comm_format_t.I2S_COMM_FORMAT_PCM,
+    "pcm_short": i2s_comm_format_t.I2S_COMM_FORMAT_PCM_SHORT,
+    "pcm_long": i2s_comm_format_t.I2S_COMM_FORMAT_PCM_LONG,
 }
 
 NO_INTERNAL_DAC_VARIANTS = [esp32.const.VARIANT_ESP32S2]
@@ -57,8 +74,12 @@ BASE_SCHEMA = (
     .extend(
         {
             cv.Optional(
-                CONF_TIMEOUT, default="100ms"
+                CONF_BUFFER_DURATION, default="500ms"
             ): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_TIMEOUT, default="500ms"): cv.Any(
+                cv.positive_time_period_milliseconds,
+                cv.one_of(CONF_NEVER, lower=True),
+            ),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -77,6 +98,9 @@ CONFIG_SCHEMA = cv.All(
                     cv.Required(
                         CONF_I2S_DOUT_PIN
                     ): pins.internal_gpio_output_pin_number,
+                    cv.Optional(CONF_I2S_COMM_FMT, default="stand_i2s"): cv.enum(
+                        I2C_COMM_FMT_OPTIONS, lower=True
+                    ),
                 }
             ),
         },
@@ -96,4 +120,7 @@ async def to_code(config):
         cg.add(var.set_internal_dac_mode(config[CONF_CHANNEL]))
     else:
         cg.add(var.set_dout_pin(config[CONF_I2S_DOUT_PIN]))
-    cg.add(var.set_timeout(config[CONF_TIMEOUT]))
+        cg.add(var.set_i2s_comm_fmt(config[CONF_I2S_COMM_FMT]))
+    if config[CONF_TIMEOUT] != CONF_NEVER:
+        cg.add(var.set_timeout(config[CONF_TIMEOUT]))
+    cg.add(var.set_buffer_duration(config[CONF_BUFFER_DURATION]))
