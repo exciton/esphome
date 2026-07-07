@@ -27,6 +27,9 @@ RUN uv pip install -r requirements.txt
 COPY requirements_dev.txt requirements_test.txt ./
 RUN uv pip install -r requirements_dev.txt -r requirements_test.txt
 
+# Install the ESPHome Device Builder dashboard.
+RUN uv pip install esphome-device-builder==1.2.0
+
 RUN \
     platformio settings set enable_telemetry No \
     && platformio settings set check_platformio_interval 1000000
