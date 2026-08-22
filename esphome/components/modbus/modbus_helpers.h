@@ -121,22 +121,6 @@ bool is_server_pdu_standard(const uint8_t *pdu, size_t size);
 // The same acceptance rule applies to custom/unknown function codes.
 bool is_client_pdu_standard(const uint8_t *pdu, size_t size);
 
-// Remove before 2027.2.0
-ESPDEPRECATED("Use server_pdu_payload() on the response PDU instead. Removed in 2027.2.0", "2026.8.0")
-inline uint8_t server_frame_data_offset(const uint8_t *frame, size_t size) {
-  if (size < 2)
-    return 0;
-  switch (static_cast<FunctionCode>(frame[1])) {
-    case FunctionCode::READ_COILS:
-    case FunctionCode::READ_DISCRETE_INPUTS:
-    case FunctionCode::READ_HOLDING_REGISTERS:
-    case FunctionCode::READ_INPUT_REGISTERS:
-      return 3;  // address(1) + function(1) + byte count(1) + data + CRC(2)
-    default:
-      return 2;
-  }
-}
-
 /** Returns the payload portion of a server response PDU: the bytes after the function code, and for the
  * read responses (0x01-0x04 and 0x17) also after the byte-count byte. Response 0x14 also carries a
  * byte-count byte, but that code is not implemented and its count byte is left in the payload. For
@@ -301,10 +285,6 @@ inline bool bit_from_packed(int bit, std::span<const uint8_t> data) {
   return (data[data_byte] & (1 << (bit % 8))) > 0;
 }
 
-// Remove before 2027.2.0
-ESPDEPRECATED("Use bit_from_packed() instead. Removed in 2027.2.0", "2026.8.0")
-inline bool coil_from_vector(int coil, std::span<const uint8_t> data) { return bit_from_packed(coil, data); }
-
 /** Append packed bytes (LSB first) for the given bits onto a growable byte container.
  * push_back-based so callers can build a payload incrementally (e.g. a std::vector<uint8_t>
  * with no fixed upper bound). A non-byte-aligned count appends n+1 bytes, the last holding
@@ -413,14 +393,6 @@ std::optional<int64_t> payload_to_number(const uint8_t *data, size_t size, Senso
 inline std::optional<int64_t> payload_to_number(std::span<const uint8_t> data, SensorValueType sensor_value_type,
                                                 uint8_t offset, uint32_t bitmask) {
   return payload_to_number(data.data(), data.size(), sensor_value_type, offset, bitmask);
-}
-
-// Remove before 2027.2.0
-ESPDEPRECATED("Use the std::span overload returning std::optional<int64_t> instead. Removed in 2027.2.0", "2026.8.0")
-inline int64_t payload_to_number(const std::vector<uint8_t> &data, SensorValueType sensor_value_type, uint8_t offset,
-                                 uint32_t bitmask) {
-  // Released behavior: a too-short payload logs an error and decodes to 0.
-  return payload_to_number(std::span<const uint8_t>(data), sensor_value_type, offset, bitmask).value_or(0);
 }
 
 /** Reconstruct a number from register words (host byte order). Inverse of number_to_payload.
@@ -555,13 +527,4 @@ template<typename Container> void float_to_payload(Container &data, float value,
 
   number_to_payload(data, val, value_type);
 }
-
-// Remove before 2027.2.0
-ESPDEPRECATED("Use the container overload of float_to_payload() instead. Removed in 2027.2.0", "2026.8.0")
-inline std::vector<uint16_t> float_to_payload(float value, SensorValueType value_type) {
-  std::vector<uint16_t> data;
-  float_to_payload(data, value, value_type);
-  return data;
-}
-
 }  // namespace esphome::modbus::helpers

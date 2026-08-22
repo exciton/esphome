@@ -285,17 +285,6 @@ class ModbusClientHub : public Modbus {
   /// duplicate) and no callback of any kind will follow; the false return is the whole story.
   bool queue_pdu(uint8_t address, std::span<const uint8_t> pdu, ModbusClientDevice *device = nullptr,
                  CommandOptions options = {});
-  // Remove before 2027.2.0. Deliberately the signature 2026.7.4 shipped - void, and no CommandOptions:
-  // the bool return and the options argument arrived after that release, so nothing external can be
-  // relying on them under this name. Callers who want the queued/refused answer move to queue_pdu().
-  ESPDEPRECATED("Use queue_pdu() instead - the call queues a request, it does not send one, and it "
-                "reports whether the request was accepted. Removed in 2027.2.0",
-                "2026.8.0")
-  void send_pdu(uint8_t address, std::span<const uint8_t> pdu, ModbusClientDevice *device = nullptr) {
-    this->queue_pdu(address, pdu, device);
-  }
-  ESPDEPRECATED("Use queue_pdu(payload[0], <pdu bytes>, device) instead. Removed in 2027.2.0", "2026.8.0")
-  void send_raw(const std::vector<uint8_t> &payload, ModbusClientDevice *device = nullptr);
   // Clear an address's commands; each un-run request resolves via on_not_sent(), but a frame on the
   // wire still runs to its usual terminal. clear_tx_queue_for_device() instead discards silently.
   void clear_tx_queue_for_address(uint8_t address);
@@ -466,28 +455,12 @@ class ModbusClientDevice {
   }
   /// Called when an accepted request was dropped before transmission by clear_tx_queue_for_address().
   /// (on_modbus_* below are deprecated pre-rename spellings; the defaults forward during deprecation.)
-  virtual void on_not_sent(std::span<const uint8_t> request_pdu) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    this->on_modbus_not_sent();
-#pragma GCC diagnostic pop
-  }
+  virtual void on_not_sent(std::span<const uint8_t> request_pdu) {}
   /// Called when this device's frame is actually written to the wire
   virtual void on_sent(std::span<const uint8_t> request_pdu) {}
   /// Called when no matching, uninterrupted response arrived; return true to have the hub re-queue the frame for a
   /// retry. The hub does not bound retries: the device is responsible for limiting them.
-  virtual bool on_no_response(std::span<const uint8_t> request_pdu) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    return this->on_modbus_no_response();
-#pragma GCC diagnostic pop
-  }
-  // Remove before 2027.2.0
-  ESPDEPRECATED("Override on_not_sent() instead. Removed in 2027.2.0", "2026.8.0")
-  virtual void on_modbus_not_sent() {}
-  // Remove before 2027.2.0
-  ESPDEPRECATED("Override on_no_response() instead. Removed in 2027.2.0", "2026.8.0")
-  virtual bool on_modbus_no_response() { return false; }
+  virtual bool on_no_response(std::span<const uint8_t> request_pdu) { return false; }
 
   /// High-level typed response callbacks, fired by the default on_response()/on_error() with arguments
   /// parsed from the request and response PDUs.
@@ -533,31 +506,12 @@ class ModbusClientDevice {
   /// to handle custom traffic (which also silences the warning).
   virtual void on_custom_response(std::span<const uint8_t> request_pdu, std::span<const uint8_t> response_pdu,
                                   ResponseStatus status);
-  ESPDEPRECATED("Use the typed read_*/write_* helpers or queue_pdu() instead. Removed in 2027.2.0", "2026.8.0")
-  void send(uint8_t function, uint16_t start_address, uint16_t number_of_entities, uint8_t payload_len = 0,
-            const uint8_t *payload = nullptr) {
-    this->parent_->queue_pdu(
-        this->address_,
-        helpers::create_client_pdu((FunctionCode) function, start_address, number_of_entities, payload, payload_len),
-        this);
-  }
   /// See ModbusClientHub::queue_pdu(): true = accepted into the queue and a terminal callback will
   /// follow (except a broadcast (address 0), which is never answered and so gets only on_sent()),
   /// false = refused at the door and nothing further happens. Neither means the frame is on the wire;
   /// on_sent() reports that.
   bool queue_pdu(std::span<const uint8_t> pdu, CommandOptions options = {}) {
     return this->parent_->queue_pdu(this->address_, pdu, this, options);
-  }
-  // Remove before 2027.2.0. As on the hub, this is the signature 2026.7.4 shipped: void, no options.
-  ESPDEPRECATED("Use queue_pdu() instead - the call queues a request, it does not send one, and it "
-                "reports whether the request was accepted. Removed in 2027.2.0",
-                "2026.8.0")
-  void send_pdu(std::span<const uint8_t> pdu) { this->queue_pdu(pdu); }
-  ESPDEPRECATED("Use queue_pdu() instead (the device address is prepended for you). Removed in 2027.2.0", "2026.8.0")
-  void send_raw(const std::vector<uint8_t> &payload) {
-    if (payload.empty())
-      return;  // too short to contain a PDU; refused at the door like any invalid send
-    this->parent_->queue_pdu(payload[0], std::span<const uint8_t>(payload).subspan(1), this);
   }
   // The typed request builders below all queue through queue_pdu(), so they share its contract: true
   // means the request is queued and will resolve in exactly one terminal callback (except a broadcast
@@ -631,33 +585,6 @@ class ModbusClientDevice {
   ModbusClientHub *parent_{nullptr};
   uint8_t address_{0};
   bool custom_response_warned_{false};  // first unhandled custom response warns; repeats log at VERBOSE
-};
-
-// Compatibility shim for external components written against the pre-2026.8 API, which subclassed
-// ModbusDevice and overrode on_modbus_data()/on_modbus_error(). The name is free (nothing in-tree
-// uses it), so instead of a plain alias it adapts the new span-based hooks back to the old
-// signatures: on_modbus_data() receives the response payload as an owning vector (the heap copy
-// exists only on this deprecated path) and on_modbus_error() the function code and exception code.
-// Remove before 2027.2.0 (window restarted when the plain alias became a behavior shim in 2026.8.0)
-class ESPDEPRECATED("Subclass ModbusClientDevice and override on_response()/on_error() instead. Removed in 2027.2.0",
-                    "2026.8.0") ModbusDevice : public ModbusClientDevice {
- public:
-  using ModbusClientDevice::ModbusClientDevice;
-  virtual void on_modbus_data(const std::vector<uint8_t> &data) {}
-  virtual void on_modbus_error(uint8_t function_code, uint8_t exception_code) {}
-
-  void on_response(std::span<const uint8_t> request_pdu, std::span<const uint8_t> response_pdu) override {
-    // Custom (user-defined) function codes historically delivered the payload starting AT the function
-    // code byte (frame data_offset 1). server_pdu_payload() drops that byte, so pass the whole PDU for
-    // them - external components match the first byte against the code they sent (issue #17994).
-    auto payload = !response_pdu.empty() && helpers::is_function_code_custom(response_pdu[0])
-                       ? response_pdu
-                       : helpers::server_pdu_payload(response_pdu);
-    this->on_modbus_data(std::vector<uint8_t>(payload.begin(), payload.end()));
-  }
-  void on_error(std::span<const uint8_t> request_pdu, ExceptionCode exception_code) override {
-    this->on_modbus_error(request_pdu.empty() ? 0 : request_pdu[0], static_cast<uint8_t>(exception_code));
-  }
 };
 
 class ModbusServerDevice {

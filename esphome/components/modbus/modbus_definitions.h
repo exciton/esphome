@@ -41,10 +41,6 @@ enum class FunctionCode : uint8_t {
   READ_FIFO_QUEUE = 0x18,  // not implemented
 };
 
-// Remove before 2027.2.0
-using ModbusFunctionCode ESPDEPRECATED("Use modbus::FunctionCode instead. Removed in 2027.2.0",
-                                       "2026.8.0") = FunctionCode;
-
 /*Allow direct comparison operators between FunctionCode and uint8_t*/
 inline bool operator==(FunctionCode lhs, uint8_t rhs) { return static_cast<uint8_t>(lhs) == rhs; }
 inline bool operator==(uint8_t lhs, FunctionCode rhs) { return lhs == static_cast<uint8_t>(rhs); }
@@ -61,12 +57,7 @@ enum class EntityType : uint8_t {
   HOLDING = 0x03,
   // Named INPUT_REGISTER (not INPUT) because Arduino cores define INPUT as a macro.
   INPUT_REGISTER = 0x04,
-  // Remove before 2027.2.0
-  READ ESPDEPRECATED("Use EntityType::INPUT_REGISTER instead. Removed in 2027.2.0", "2026.7.0") = INPUT_REGISTER,
 };
-
-// Remove before 2027.2.0
-using ModbusRegisterType ESPDEPRECATED("Use modbus::EntityType instead. Removed in 2027.2.0", "2026.8.0") = EntityType;
 
 // 7 MODBUS Exception Responses:
 const uint8_t FUNCTION_CODE_MASK = 0x7F;
@@ -83,10 +74,6 @@ enum class ExceptionCode : uint8_t {
   GATEWAY_PATH_UNAVAILABLE = 0x0A,
   GATEWAY_TARGET_DEVICE_FAILED_TO_RESPOND = 0x0B,
 };
-
-// Remove before 2027.2.0
-using ModbusExceptionCode ESPDEPRECATED("Use modbus::ExceptionCode instead. Removed in 2027.2.0",
-                                        "2026.8.0") = ExceptionCode;
 
 // 6.11 15 (0x0F) Write Multiple Coils
 static constexpr uint16_t MAX_NUM_OF_COILS_TO_WRITE = 1968;  // 0x7B0

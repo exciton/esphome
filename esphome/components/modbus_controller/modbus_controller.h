@@ -21,14 +21,6 @@ using modbus::ExceptionCode;
 using modbus::FunctionCode;
 using modbus::helpers::SensorValueType;
 
-// Remove before 2027.2.0 - deprecated names re-exported so external components keep their warning window
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-using modbus::ModbusExceptionCode;
-using modbus::ModbusFunctionCode;
-using modbus::ModbusRegisterType;
-#pragma GCC diagnostic pop
-
 // Remove before 2026.10.0 — these helpers have moved to modbus::helpers
 ESPDEPRECATED("Use modbus::helpers::value_type_is_float() instead. Removed in 2026.10.0", "2026.4.0")
 inline bool value_type_is_float(SensorValueType v) { return modbus::helpers::value_type_is_float(v); }
@@ -70,32 +62,6 @@ template<typename T>
 ESPDEPRECATED("Use modbus::helpers::get_data() instead. Removed in 2026.10.0", "2026.4.0")
 T get_data(const std::vector<uint8_t> &data, size_t buffer_offset) {
   return modbus::helpers::get_data<T>(data, buffer_offset);
-}
-
-// Span overloads of the deprecated helpers below: read lambdas receive their payload as a
-// std::span<const uint8_t> (previously a const std::vector<uint8_t> &), and a span does not convert to
-// a vector, so existing lambdas calling these by name need an overload that accepts one. These carry
-// this release's deprecation window, since the span forms only exist from it.
-// payload_to_number() deliberately has no such overload: one of its arguments is a modbus::helpers
-// type, so a span call already reaches the helper by argument-dependent lookup, and a forwarder here
-// would only make that call ambiguous.
-// Remove before 2027.2.0.
-template<typename T>
-ESPDEPRECATED("Use modbus::helpers::get_data() instead. Removed in 2027.2.0", "2026.8.0")
-T get_data(std::span<const uint8_t> data, size_t buffer_offset) {
-  return modbus::helpers::get_data<T>(data.data(), buffer_offset);
-}
-
-// Remove before 2027.2.0 (window restarted when the migration target changed to bit_from_packed())
-ESPDEPRECATED("Use modbus::helpers::bit_from_packed() instead. Removed in 2027.2.0", "2026.4.0")
-inline bool coil_from_vector(int coil, const std::vector<uint8_t> &data) {
-  return modbus::helpers::bit_from_packed(coil, data);
-}
-
-// Remove before 2027.2.0
-ESPDEPRECATED("Use modbus::helpers::bit_from_packed() instead. Removed in 2027.2.0", "2026.8.0")
-inline bool coil_from_vector(int coil, std::span<const uint8_t> data) {
-  return modbus::helpers::bit_from_packed(coil, data);
 }
 
 template<typename N>
@@ -529,13 +495,4 @@ inline float payload_to_float(std::span<const uint8_t> data, const SensorItem &i
 
   return float_value;
 }
-
-// Remove before 2027.2.0 (window opened when this helper gained an explicit offset). item.offset is
-// the item's resolved position within its range's response, so this decodes the same bytes as passing
-// that offset explicitly.
-ESPDEPRECATED("Pass the offset explicitly: payload_to_float(data, item, item.offset). Removed in 2027.2.0", "2026.8.0")
-inline float payload_to_float(std::span<const uint8_t> data, const SensorItem &item) {
-  return payload_to_float(data, item, item.offset);
-}
-
 }  // namespace esphome::modbus_controller
