@@ -215,14 +215,9 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     cg.add(var.set_max_cmd_retries(config[CONF_MAX_CMD_RETRIES]))
     cg.add(var.set_offline_skip_updates(config[CONF_OFFLINE_SKIP_UPDATES]))
-    await register_modbus_device(var, config)
-    await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
-
-
-async def register_modbus_device(var, config):
-    cg.add(var.set_address(config[CONF_ADDRESS]))
     await cg.register_component(var, config)
-    return await modbus.register_modbus_client_device(var, config)
+    await modbus.register_modbus_client_device(var, config)
+    await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
 
 
 def function_code_to_register(function_code):

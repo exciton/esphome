@@ -161,12 +161,3 @@ async def register_modbus_server_device(var: MockObj, config: ConfigType) -> Non
     parent = await cg.get_variable(config[CONF_MODBUS_ID])
     cg.add(var.set_address(config[CONF_ADDRESS]))
     cg.add(parent.register_device(var))
-
-
-async def register_modbus_device(var: MockObj, config: ConfigType) -> None:
-    # Remove before 2026.12.0
-    _LOGGER.warning(
-        "'register_modbus_device' is deprecated, use 'register_modbus_client_device' "
-        "instead. Will be removed in 2026.12.0"
-    )
-    return await register_modbus_client_device(var, config)
