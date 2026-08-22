@@ -269,14 +269,6 @@ class ModbusClientHub : public Modbus {
   void set_turnaround_time(uint16_t time_in_ms) { this->turnaround_delay_ms_ = time_in_ms; }
   bool tx_buffer_empty();
   bool tx_blocked() override;
-  ESPDEPRECATED("Use queue_pdu() with create_client_pdu() instead. Removed in 2026.10.0", "2026.4.0")
-  void send(uint8_t address, uint8_t function_code, uint16_t start_address, uint16_t number_of_entities,
-            uint8_t payload_len = 0, const uint8_t *payload = nullptr, ModbusClientDevice *device = nullptr) {
-    this->queue_pdu(address,
-                    helpers::create_client_pdu((FunctionCode) function_code, start_address, number_of_entities, payload,
-                                               payload_len),
-                    device);
-  };
   /// Queue a request. The name says queue, not send: the frame is appended to the transmit queue and
   /// goes out later from loop(), so a true return means accepted into the machine (it will resolve in
   /// exactly one terminal callback - except a broadcast (address 0), which is never answered and so gets
