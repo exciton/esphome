@@ -9,11 +9,13 @@ namespace esphome::sdm_meter {
 
 static const char *const TAG = "sdm_meter";
 
-// Breakeven for splitting the poll into separate reads: an extra request costs an 8-byte request
-// frame, 5 bytes of response framing and two 3.5-character bus turnaround gaps - about 20 byte
-// times - while each unneeded register read in a combined request costs only 2 bytes. Splitting
-// therefore only pays off when it skips more than ~10 registers.
-static const uint16_t SPLIT_GAP_REGISTERS = 10;
+// Breakeven for splitting the poll into separate reads. An extra request costs an 8-byte request
+// frame, 5 bytes of response framing, two 3.5-character bus turnaround gaps, and the meter's
+// response latency; each unneeded register read in a combined request costs only 2 bytes. The
+// latency is a fixed time (typically tens of ms), so its cost in byte times grows with baud rate:
+// at the 2400 baud factory default the total is ~25 byte times, at 9600 baud ~40. Splitting past
+// a 20-register gap therefore pays off across the common baud rates.
+static const uint16_t SPLIT_GAP_REGISTERS = 20;
 
 void SDMMeter::on_read_input_registers(uint16_t start_address, std::span<const uint16_t> registers,
                                        modbus::ResponseStatus status) {
