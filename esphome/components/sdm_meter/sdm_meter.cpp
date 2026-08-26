@@ -10,8 +10,8 @@ namespace esphome::sdm_meter {
 static const char *const TAG = "sdm_meter";
 
 // Fixed cost of an extra read request, in byte times: an 8-byte request frame, 5 bytes of response
-// framing, and two 3.5-character inter-frame gaps. The hub's configured turnaround idle time is
-// added on top at runtime, converted to byte times at the configured baud rate.
+// framing, and two 3.5-character inter-frame gaps. The hub's turnaround idle time is added on top
+// at runtime.
 static const uint16_t SPLIT_OVERHEAD_BYTES = 20;
 
 void SDMMeter::on_read_input_registers(uint16_t start_address, std::span<const uint16_t> registers,
@@ -84,9 +84,7 @@ void SDMMeter::update() {
   // framing overhead plus the turnaround idle the hub enforces before every transmit, against
   // 2 bytes per unneeded register read. With the default 600 ms turnaround a split never pays off
   // within this register map; it kicks in when the hub is tuned for a faster bus.
-  const uint32_t turnaround_bytes =
-      (uint32_t) this->parent_->get_turnaround_time() * this->parent_->get_baud_rate() / (11 * 1000);
-  const uint32_t split_gap = (SPLIT_OVERHEAD_BYTES + turnaround_bytes) / 2;
+  const uint32_t split_gap = (SPLIT_OVERHEAD_BYTES + this->parent_->get_turnaround_byte_times()) / 2;
 
   // Queue one read per cluster of registers, starting a new request only where the gap to the next
   // needed register exceeds the breakeven point.

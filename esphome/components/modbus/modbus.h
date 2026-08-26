@@ -281,8 +281,15 @@ class ModbusClientHub : public Modbus {
   void loop() override;
   void set_send_wait_time(uint16_t time_in_ms) { this->send_wait_time_ = time_in_ms; }
   void set_turnaround_time(uint16_t time_in_ms) { this->turnaround_delay_ms_ = time_in_ms; }
-  uint16_t get_turnaround_time() const { return this->turnaround_delay_ms_; }
-  uint32_t get_baud_rate() const { return this->parent_->get_baud_rate(); }
+  /// The configured turnaround idle time expressed in byte times on the wire, for devices weighing
+  /// the cost of an extra request against padding a combined one (each request pays one turnaround).
+  uint32_t get_turnaround_byte_times() const {
+    auto *uart = this->parent_;
+    const uint32_t bits_per_byte = 1 + uart->get_data_bits() +
+                                   (uart->get_parity() != uart::UART_CONFIG_PARITY_NONE ? 1 : 0) +
+                                   uart->get_stop_bits();
+    return (uint32_t) this->turnaround_delay_ms_ * uart->get_baud_rate() / (bits_per_byte * 1000);
+  }
   bool tx_buffer_empty();
   bool tx_blocked() override;
   ESPDEPRECATED("Use queue_pdu() with create_client_pdu() instead. Removed in 2026.10.0", "2026.4.0")
