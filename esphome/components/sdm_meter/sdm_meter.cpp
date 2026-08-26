@@ -9,13 +9,10 @@ namespace esphome::sdm_meter {
 
 static const char *const TAG = "sdm_meter";
 
-// Breakeven for splitting the poll into separate reads. An extra request costs an 8-byte request
-// frame, 5 bytes of response framing, two 3.5-character bus turnaround gaps, and the meter's
-// response latency; each unneeded register read in a combined request costs only 2 bytes. The
-// latency is a fixed time (typically tens of ms), so its cost in byte times grows with baud rate:
-// at the 2400 baud factory default the total is ~25 byte times, at 9600 baud ~40. Splitting past
-// a 20-register gap therefore pays off across the common baud rates.
-static const uint16_t SPLIT_GAP_REGISTERS = 20;
+// Fixed cost of an extra read request, in byte times: an 8-byte request frame, 5 bytes of response
+// framing, and two 3.5-character inter-frame gaps. The hub's configured turnaround idle time is
+// added on top at runtime, converted to byte times at the configured baud rate.
+static const uint16_t SPLIT_OVERHEAD_BYTES = 20;
 
 void SDMMeter::on_read_input_registers(uint16_t start_address, std::span<const uint16_t> registers,
                                        modbus::ResponseStatus status) {
@@ -83,13 +80,21 @@ void SDMMeter::update() {
   if (regs.empty())
     return;
 
+  // Splitting only pays off when the skipped registers cost more than the extra request: its fixed
+  // framing overhead plus the turnaround idle the hub enforces before every transmit, against
+  // 2 bytes per unneeded register read. With the default 600 ms turnaround a split never pays off
+  // within this register map; it kicks in when the hub is tuned for a faster bus.
+  const uint32_t turnaround_bytes =
+      (uint32_t) this->parent_->get_turnaround_time() * this->parent_->get_baud_rate() / (11 * 1000);
+  const uint32_t split_gap = (SPLIT_OVERHEAD_BYTES + turnaround_bytes) / 2;
+
   // Queue one read per cluster of registers, starting a new request only where the gap to the next
   // needed register exceeds the breakeven point.
   std::sort(regs.begin(), regs.end());
   uint16_t start = regs[0];
   uint16_t end = regs[0] + 2;
   for (uint16_t reg : regs) {
-    if (reg > end + SPLIT_GAP_REGISTERS) {
+    if (reg > end + split_gap) {
       this->read_input_registers(start, end - start);
       start = reg;
     }

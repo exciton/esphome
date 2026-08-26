@@ -281,6 +281,8 @@ class ModbusClientHub : public Modbus {
   void loop() override;
   void set_send_wait_time(uint16_t time_in_ms) { this->send_wait_time_ = time_in_ms; }
   void set_turnaround_time(uint16_t time_in_ms) { this->turnaround_delay_ms_ = time_in_ms; }
+  uint16_t get_turnaround_time() const { return this->turnaround_delay_ms_; }
+  uint32_t get_baud_rate() const { return this->parent_->get_baud_rate(); }
   bool tx_buffer_empty();
   bool tx_blocked() override;
   ESPDEPRECATED("Use queue_pdu() with create_client_pdu() instead. Removed in 2026.10.0", "2026.4.0")
