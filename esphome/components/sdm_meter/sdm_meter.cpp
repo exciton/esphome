@@ -3,11 +3,17 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
+#include <algorithm>
+
 namespace esphome::sdm_meter {
 
 static const char *const TAG = "sdm_meter";
 
-static const uint8_t MODBUS_REGISTER_COUNT = 80;  // 80 x 16-bit registers (40 float values)
+// Breakeven for splitting the poll into separate reads: an extra request costs an 8-byte request
+// frame, 5 bytes of response framing and two 3.5-character bus turnaround gaps - about 20 byte
+// times - while each unneeded register read in a combined request costs only 2 bytes. Splitting
+// therefore only pays off when it skips more than ~10 registers.
+static const uint16_t SPLIT_GAP_REGISTERS = 10;
 
 void SDMMeter::on_read_input_registers(uint16_t start_address, std::span<const uint16_t> registers,
                                        modbus::ResponseStatus status) {
@@ -49,7 +55,46 @@ void SDMMeter::on_read_input_registers(uint16_t start_address, std::span<const u
   publish(SDM_EXPORT_REACTIVE_ENERGY, this->export_reactive_energy_sensor_);
 }
 
-void SDMMeter::update() { this->read_input_registers(0, MODBUS_REGISTER_COUNT); }
+void SDMMeter::update() {
+  // Collect the start register of every configured sensor (each value spans 2 registers).
+  StaticVector<uint16_t, 27> regs;  // 7 phase sensors x 3 phases + 6 totals
+  auto add = [&](sensor::Sensor *sensor, uint16_t reg) {
+    if (sensor != nullptr)
+      regs.push_back(reg);
+  };
+  for (uint8_t i = 0; i < 3; i++) {
+    auto &phase = this->phases_[i];
+    add(phase.voltage_sensor_, SDM_PHASE_1_VOLTAGE + i * 2);
+    add(phase.current_sensor_, SDM_PHASE_1_CURRENT + i * 2);
+    add(phase.active_power_sensor_, SDM_PHASE_1_ACTIVE_POWER + i * 2);
+    add(phase.apparent_power_sensor_, SDM_PHASE_1_APPARENT_POWER + i * 2);
+    add(phase.reactive_power_sensor_, SDM_PHASE_1_REACTIVE_POWER + i * 2);
+    add(phase.power_factor_sensor_, SDM_PHASE_1_POWER_FACTOR + i * 2);
+    add(phase.phase_angle_sensor_, SDM_PHASE_1_ANGLE + i * 2);
+  }
+  add(this->total_power_sensor_, SDM_TOTAL_SYSTEM_POWER);
+  add(this->frequency_sensor_, SDM_FREQUENCY);
+  add(this->import_active_energy_sensor_, SDM_IMPORT_ACTIVE_ENERGY);
+  add(this->export_active_energy_sensor_, SDM_EXPORT_ACTIVE_ENERGY);
+  add(this->import_reactive_energy_sensor_, SDM_IMPORT_REACTIVE_ENERGY);
+  add(this->export_reactive_energy_sensor_, SDM_EXPORT_REACTIVE_ENERGY);
+  if (regs.empty())
+    return;
+
+  // Queue one read per cluster of registers, starting a new request only where the gap to the next
+  // needed register exceeds the breakeven point.
+  std::sort(regs.begin(), regs.end());
+  uint16_t start = regs[0];
+  uint16_t end = regs[0] + 2;
+  for (uint16_t reg : regs) {
+    if (reg > end + SPLIT_GAP_REGISTERS) {
+      this->read_input_registers(start, end - start);
+      start = reg;
+    }
+    end = reg + 2;
+  }
+  this->read_input_registers(start, end - start);
+}
 void SDMMeter::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "SDM Meter:\n"
