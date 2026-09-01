@@ -1,0 +1,18 @@
+# The remaining debug variants live here because an ESP32 has three hardware UART
+# ports and the logger holds one of them, leaving room for only two buses per config.
+uart:
+  - id: uart_debug_custom
+    tx_pin: 25
+    rx_pin: 26
+    baud_rate: 9600
+    debug:
+      debug_prefix: "[UART2] "
+      after:
+        delimiter: "\n"
+      sequence:
+        - lambda: UARTDebug::log_string(direction, bytes, debug_prefix);
+  - id: uart_debug_no_prefix
+    tx_pin: 32
+    rx_pin: 33
+    baud_rate: 9600
+    debug:

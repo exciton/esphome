@@ -76,38 +76,81 @@ uart_config_t IDFUARTComponent::get_config_() {
   return uart_config;
 }
 
-void IDFUARTComponent::setup() {
-  static uint8_t next_uart_num = 0;
-
+/// Is the logger sending its output to this hardware UART port?
+///
+/// The logger writes to whichever port it was given, so a bus must never be placed there.
+static bool logger_owns_port(uint8_t port) {
 #ifdef USE_LOGGER
-  bool logger_uses_hardware_uart = true;
-
 #ifdef USE_LOGGER_USB_CDC
   if (logger::global_logger->get_uart() == logger::UART_SELECTION_USB_CDC) {
     // this is not a hardware UART, ignore it
-    logger_uses_hardware_uart = false;
+    return false;
   }
 #endif  // USE_LOGGER_USB_CDC
 
 #ifdef USE_LOGGER_USB_SERIAL_JTAG
   if (logger::global_logger->get_uart() == logger::UART_SELECTION_USB_SERIAL_JTAG) {
     // this is not a hardware UART, ignore it
-    logger_uses_hardware_uart = false;
+    return false;
   }
 #endif  // USE_LOGGER_USB_SERIAL_JTAG
 
-  if (logger_uses_hardware_uart && logger::global_logger->get_baud_rate() > 0 &&
-      logger::global_logger->get_uart_num() == next_uart_num) {
-    next_uart_num++;
-  }
+  return logger::global_logger->get_baud_rate() > 0 && logger::global_logger->get_uart_num() == port;
+#else
+  (void) port;
+  return false;
 #endif  // USE_LOGGER
+}
 
-  if (next_uart_num >= SOC_UART_NUM) {
+/// The hardware UART port ESP-IDF uses for the serial console, or -1 if it uses none.
+///
+/// The console carries the bootloader banner and the crash output. ESP-IDF puts it on UART0
+/// unless the logger moved it to USB, in which case CONFIG_ESP_CONSOLE_UART_NUM is -1.
+#if defined(CONFIG_ESP_CONSOLE_UART_NUM) && CONFIG_ESP_CONSOLE_UART_NUM >= 0
+static constexpr int8_t CONSOLE_UART_PORT = CONFIG_ESP_CONSOLE_UART_NUM;
+#else
+static constexpr int8_t CONSOLE_UART_PORT = -1;
+#endif
+
+void IDFUARTComponent::setup() {
+  // One bit per hardware UART port, set once a bus has been given that port
+  static uint32_t ports_taken = 0;
+
+  // Prefer a port nothing else is driving. Assigning pins to a port moves everything that
+  // port already carries onto those pins, so the console and the logger are avoided while
+  // any other port is still free.
+  int8_t port = -1;
+  for (uint8_t i = 0; i < SOC_UART_NUM; i++) {
+    if ((ports_taken & (1 << i)) == 0 && (int8_t) i != CONSOLE_UART_PORT && !logger_owns_port(i)) {
+      port = (int8_t) i;
+      break;
+    }
+  }
+
+  if (port < 0) {
+    // Nothing else is free, so fall back to the console port. The logger's port is never
+    // handed out: the logger writes to it continuously, while the console is only used for
+    // the bootloader banner and crash output.
+    for (uint8_t i = 0; i < SOC_UART_NUM; i++) {
+      if ((ports_taken & (1 << i)) == 0 && !logger_owns_port(i)) {
+        port = (int8_t) i;
+        ESP_LOGW(TAG,
+                 "Using UART%d, which ESP-IDF also uses for the serial console; boot and crash "
+                 "messages will be sent to this bus",
+                 (int) i);
+        break;
+      }
+    }
+  }
+
+  if (port < 0) {
     ESP_LOGW(TAG, "Maximum number of UART components created already");
     this->mark_failed();
     return;
   }
-  this->uart_num_ = static_cast<uart_port_t>(next_uart_num++);
+
+  ports_taken |= 1 << port;
+  this->uart_num_ = static_cast<uart_port_t>(port);
 
 #if (SOC_UART_LP_NUM >= 1)
   size_t fifo_len = ((this->uart_num_ < SOC_UART_HP_NUM) ? SOC_UART_FIFO_LEN : SOC_LP_UART_FIFO_LEN);

@@ -30,21 +30,6 @@ uart:
     baud_rate: 115200
     debug:
       debug_prefix: "[UART1] "
-  - id: uart_debug_custom
-    tx_pin: 25
-    rx_pin: 26
-    baud_rate: 9600
-    debug:
-      debug_prefix: "[UART2] "
-      after:
-        delimiter: "\n"
-      sequence:
-        - lambda: UARTDebug::log_string(direction, bytes, debug_prefix);
-  - id: uart_debug_no_prefix
-    tx_pin: 32
-    rx_pin: 33
-    baud_rate: 9600
-    debug:
 
 packet_transport:
   - platform: uart

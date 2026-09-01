@@ -5,6 +5,22 @@ import re
 from esphome import automation, pins
 import esphome.codegen as cg
 from esphome.components.const import CONF_DATA_BITS, CONF_PARITY, CONF_STOP_BITS
+from esphome.components.esp32 import get_esp32_variant
+from esphome.components.esp32.const import (
+    VARIANT_ESP32,
+    VARIANT_ESP32C2,
+    VARIANT_ESP32C3,
+    VARIANT_ESP32C5,
+    VARIANT_ESP32C6,
+    VARIANT_ESP32C61,
+    VARIANT_ESP32H2,
+    VARIANT_ESP32H4,
+    VARIANT_ESP32H21,
+    VARIANT_ESP32P4,
+    VARIANT_ESP32S2,
+    VARIANT_ESP32S3,
+    VARIANT_ESP32S31,
+)
 from esphome.config_helpers import (
     filter_source_files_from_defines,
     filter_source_files_from_platform,
@@ -21,8 +37,10 @@ from esphome.const import (
     CONF_DUMMY_RECEIVER,
     CONF_DUMMY_RECEIVER_ID,
     CONF_FLOW_CONTROL_PIN,
+    CONF_HARDWARE_UART,
     CONF_ID,
     CONF_LAMBDA,
+    CONF_LOGGER,
     CONF_NUMBER,
     CONF_PORT,
     CONF_RX_BUFFER_SIZE,
@@ -37,6 +55,7 @@ from esphome.const import (
 )
 from esphome.core import CORE, ID, CoroPriority, coroutine_with_priority
 import esphome.final_validate as fv
+from esphome.types import ConfigType
 from esphome.yaml_util import make_data_base
 
 _LOGGER = getLogger(__name__)
@@ -275,6 +294,120 @@ CONFIG_SCHEMA = cv.All(
     validate_host_config,
     validate_rx_buffer_size,
 )
+
+# Number of hardware UART ports on each ESP32 variant. Values are SOC_UART_NUM from
+# ESP-IDF, in components/soc/<target>/include/soc/soc_caps.h. Where a variant has a low
+# power UART that port is included, matching how the C++ side counts them.
+ESP32_UART_PORTS = {
+    VARIANT_ESP32: 3,
+    VARIANT_ESP32C2: 2,
+    VARIANT_ESP32C3: 2,
+    VARIANT_ESP32C5: 3,
+    VARIANT_ESP32C6: 3,
+    VARIANT_ESP32C61: 3,
+    VARIANT_ESP32H2: 2,
+    VARIANT_ESP32H4: 2,
+    VARIANT_ESP32H21: 2,
+    VARIANT_ESP32P4: 6,
+    VARIANT_ESP32S2: 2,
+    VARIANT_ESP32S3: 3,
+    VARIANT_ESP32S31: 3,
+}
+
+# The logger's hardware_uart values that put its output on a hardware UART port, and the
+# port each one means. Any other value sends the log over USB instead.
+LOGGER_UART_PORTS = {"UART0": 0, "UART1": 1, "UART2": 2}
+
+# ESP-IDF puts its serial console, which carries the bootloader banner and the crash
+# output, on UART0. Only the logger's USB settings move it off the hardware UARTs.
+CONSOLE_UART_PORT = 0
+
+
+def _esp32_reserved_ports(full_config: ConfigType) -> tuple[int | None, int | None]:
+    """Return the ports the ESP-IDF console and the logger occupy, if any."""
+    logger_config = full_config.get(CONF_LOGGER)
+    if logger_config is None:
+        # With no logger the console keeps ESP-IDF's default of UART0
+        return CONSOLE_UART_PORT, None
+    hardware_uart = logger_config.get(CONF_HARDWARE_UART)
+    console_port = CONSOLE_UART_PORT if hardware_uart in LOGGER_UART_PORTS else None
+    logger_port = None
+    if logger_config.get(CONF_BAUD_RATE):
+        logger_port = LOGGER_UART_PORTS.get(hardware_uart)
+    return console_port, logger_port
+
+
+def _esp32_assign_ports(
+    bus_count: int, port_count: int, console_port: int | None, logger_port: int | None
+) -> list[int | None]:
+    """Work out the port each bus will be given, as IDFUARTComponent::setup() does.
+
+    Buses are placed on a port nothing else drives first, because assigning pins to a port
+    moves whatever that port already carries onto those pins. The console port is only used
+    once every other port is gone; the logger's port is never used.
+    """
+    taken = set() if logger_port is None else {logger_port}
+    assigned: list[int | None] = []
+    for _ in range(bus_count):
+        port = next(
+            (p for p in range(port_count) if p not in taken and p != console_port), None
+        )
+        if port is None:
+            port = next((p for p in range(port_count) if p not in taken), None)
+        if port is not None:
+            taken.add(port)
+        assigned.append(port)
+    return assigned
+
+
+def _check_esp32_ports(config: ConfigType) -> ConfigType:
+    """Report buses that cannot get a hardware UART port of their own."""
+    if not CORE.is_esp32:
+        return config
+    port_count = ESP32_UART_PORTS.get(get_esp32_variant())
+    if port_count is None:
+        return config
+
+    full_config = fv.full_config.get()
+    bus_configs = full_config.get(DOMAIN, [])
+    index = next(
+        (i for i, c in enumerate(bus_configs) if c[CONF_ID] == config[CONF_ID]), None
+    )
+    if index is None:
+        return config
+
+    console_port, logger_port = _esp32_reserved_ports(full_config)
+    port = _esp32_assign_ports(len(bus_configs), port_count, console_port, logger_port)[
+        index
+    ]
+
+    if port is None:
+        used_by_logger = (
+            " One of them is used by the logger; set baud_rate to 0 there, or move the "
+            "logger to USB_CDC or USB_SERIAL_JTAG, to free it."
+            if logger_port is not None
+            else ""
+        )
+        raise cv.Invalid(
+            f"This board has only {port_count} hardware UART ports and they are all in "
+            f"use, so this bus cannot be set up.{used_by_logger}"
+        )
+
+    if port == console_port:
+        _LOGGER.warning(
+            "UART bus '%s' will be given UART%d, which ESP-IDF also uses for its serial "
+            "console. Setting pins on this bus moves the console onto them, so the "
+            "bootloader banner and crash messages will be sent to whatever is wired "
+            "there. Set the logger's hardware_uart to USB_CDC or USB_SERIAL_JTAG to move "
+            "the console off the hardware UARTs.",
+            config[CONF_ID],
+            port,
+        )
+
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _check_esp32_ports
 
 
 async def debug_to_code(config, parent):
