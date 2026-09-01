@@ -4,3 +4,7 @@ substitutions:
   sleep_pin: GPIO0
 
 <<: !include common.yaml
+
+# The logger shares UART0 with this test's pins, as it does on real hardware
+logger:
+  baud_rate: 0

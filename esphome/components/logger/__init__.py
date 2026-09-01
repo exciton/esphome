@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from esphome import automation
+from esphome import automation, pins
 from esphome.automation import LambdaAction, StatelessLambdaAction
 import esphome.codegen as cg
 from esphome.components.esp32 import (
@@ -37,6 +37,7 @@ from esphome.components.zephyr import (
 from esphome.config_helpers import filter_source_files_from_platform
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_ALLOW_OTHER_USES,
     CONF_ARGS,
     CONF_BAUD_RATE,
     CONF_DEASSERT_RTS_DTR,
@@ -102,6 +103,16 @@ UART0_SWAP = "UART0_SWAP"
 USB_SERIAL_JTAG = "USB_SERIAL_JTAG"
 USB_CDC = "USB_CDC"
 DEFAULT = "DEFAULT"
+
+# The logger never assigns pins to its UART, so it ends up on whichever pins the
+# chip already routes that UART to. On ESP8266 the logger calls Serial.begin(),
+# which puts UART0 on these pins; UART0_SWAP moves it, and UART1 can only
+# transmit, so it uses a single pin.
+ESP8266_UART_PINS = {
+    UART0: (1, 3),
+    UART0_SWAP: (15, 13),
+    UART1: (2,),
+}
 
 CONF_INITIAL_LEVEL = "initial_level"
 CONF_LOGGER_ID = "logger_id"
@@ -223,6 +234,46 @@ def validate_wait_for_cdc(config: ConfigType) -> ConfigType:
     if config.get(CONF_WAIT_FOR_CDC) and config.get(CONF_HARDWARE_UART) != USB_CDC:
         raise cv.Invalid("wait_for_cdc requires hardware_uart: USB_CDC")
     return config
+
+
+def _logger_pins(config: ConfigType) -> tuple[int, ...]:
+    """Return the pins the logger sends its output to, if any."""
+    if config[CONF_BAUD_RATE] == 0:
+        return ()
+    if CORE.is_esp8266:
+        return ESP8266_UART_PINS.get(config.get(CONF_HARDWARE_UART), ())
+    return ()
+
+
+def _check_pin_conflicts(config: ConfigType) -> None:
+    """Report pins driven by both the logger and another component."""
+    if not (logger_pins := _logger_pins(config)):
+        return
+    hardware_uart = config[CONF_HARDWARE_UART]
+    errs = []
+    for (key, _, number), pin_list in pins.PIN_SCHEMA_REGISTRY.pins_used.items():
+        # Pins on an expander are numbered separately from the chip's own pins
+        if key != CORE.target_platform or number not in logger_pins:
+            continue
+        for pin_path, _, pin_config in pin_list:
+            if pin_config.get(CONF_ALLOW_OTHER_USES):
+                continue
+            other = " -> ".join(str(part) for part in pin_path)
+            errs.append(
+                cv.Invalid(
+                    f"The logger is set to use {hardware_uart}, which sends its "
+                    f"output to pin {number}. Pin {number} is also used by "
+                    f"{other}, so the log output will interfere with it. To fix "
+                    f"this, either set baud_rate to 0 here to turn off logging "
+                    f"over the serial port, or move {other} to another pin.",
+                    [CONF_HARDWARE_UART],
+                )
+            )
+    if errs:
+        raise cv.MultipleInvalid(errs)
+
+
+FINAL_VALIDATE_SCHEMA = _check_pin_conflicts
 
 
 Logger = logger_ns.class_("Logger", cg.Component)

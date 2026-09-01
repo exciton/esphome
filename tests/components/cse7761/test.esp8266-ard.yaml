@@ -6,3 +6,7 @@ packages:
   uart_38400: !include ../../test_build_components/common/uart_38400/esp8266-ard.yaml
 
 <<: !include common.yaml
+
+# The logger shares UART0 with this test's pins, as it does on real hardware
+logger:
+  baud_rate: 0
