@@ -1,7 +1,7 @@
 stepper:
   - platform: a4988
     id: test_stepper
-    step_pin: 3
+    step_pin: 13
     dir_pin: 4
     sleep_pin: 5
     max_speed: 250 steps/s

@@ -3,7 +3,7 @@ packages:
     file: garage-door.yaml
     vars:
       door_name: Left
-      door_pin: 1
+      door_pin: 13
       door_id: left_garage_door
   middle_garage_door: !include
     file: garage-door.yaml
@@ -15,5 +15,5 @@ packages:
     file: garage-door.yaml
     vars:
       door_name: Right
-      door_pin: 3
+      door_pin: 15
       door_id: right_garage_door

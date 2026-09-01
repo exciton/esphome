@@ -1,7 +1,7 @@
 binary_sensor:
   - platform: gpio
     id: alarm_control_panel_bin1
-    pin: 1
+    pin: 13
 
 alarm_control_panel:
   - platform: template

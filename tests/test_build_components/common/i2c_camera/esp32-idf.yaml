@@ -26,7 +26,7 @@ esp32_camera:
     frequency: 20MHz
   i2c_id: i2c_camera_bus
   reset_pin: 15
-  power_down_pin: 1
+  power_down_pin: 32
   resolution: 640x480
   jpeg_quality: 10
   frame_buffer_location: PSRAM

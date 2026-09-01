@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from esphome import automation
+from esphome import automation, pins
 from esphome.automation import LambdaAction, StatelessLambdaAction
 import esphome.codegen as cg
 from esphome.components.esp32 import (
@@ -37,6 +37,7 @@ from esphome.components.zephyr import (
 from esphome.config_helpers import filter_source_files_from_platform
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_ALLOW_OTHER_USES,
     CONF_ARGS,
     CONF_BAUD_RATE,
     CONF_DEASSERT_RTS_DTR,
@@ -102,6 +103,28 @@ UART0_SWAP = "UART0_SWAP"
 USB_SERIAL_JTAG = "USB_SERIAL_JTAG"
 USB_CDC = "USB_CDC"
 DEFAULT = "DEFAULT"
+
+# The logger never assigns pins to its UART, so it ends up on whichever pins the
+# chip already routes that UART to. On ESP32 that is the ROM console, which is
+# always wired to UART0; UART1 and UART2 are not routed anywhere until something
+# assigns pins to them, so they cannot clash and are left out here. Values are
+# U0TXD_GPIO_NUM and U0RXD_GPIO_NUM from ESP-IDF, in
+# components/soc/<target>/include/soc/uart_pins.h
+ESP32_UART0_PINS = {
+    VARIANT_ESP32: (1, 3),
+    VARIANT_ESP32C2: (20, 19),
+    VARIANT_ESP32C3: (21, 20),
+    VARIANT_ESP32C5: (11, 12),
+    VARIANT_ESP32C6: (16, 17),
+    VARIANT_ESP32C61: (11, 10),
+    VARIANT_ESP32H2: (24, 23),
+    VARIANT_ESP32H4: (24, 23),
+    VARIANT_ESP32H21: (16, 15),
+    VARIANT_ESP32P4: (37, 38),
+    VARIANT_ESP32S2: (43, 44),
+    VARIANT_ESP32S3: (43, 44),
+    VARIANT_ESP32S31: (58, 59),
+}
 
 CONF_INITIAL_LEVEL = "initial_level"
 CONF_LOGGER_ID = "logger_id"
@@ -223,6 +246,46 @@ def validate_wait_for_cdc(config: ConfigType) -> ConfigType:
     if config.get(CONF_WAIT_FOR_CDC) and config.get(CONF_HARDWARE_UART) != USB_CDC:
         raise cv.Invalid("wait_for_cdc requires hardware_uart: USB_CDC")
     return config
+
+
+def _logger_pins(config: ConfigType) -> tuple[int, ...]:
+    """Return the pins the logger sends its output to, if any."""
+    if config[CONF_BAUD_RATE] == 0:
+        return ()
+    if CORE.is_esp32 and config.get(CONF_HARDWARE_UART) == UART0:
+        return ESP32_UART0_PINS.get(get_esp32_variant(), ())
+    return ()
+
+
+def _check_pin_conflicts(config: ConfigType) -> None:
+    """Report pins driven by both the logger and another component."""
+    if not (logger_pins := _logger_pins(config)):
+        return
+    hardware_uart = config[CONF_HARDWARE_UART]
+    errs = []
+    for (key, _, number), pin_list in pins.PIN_SCHEMA_REGISTRY.pins_used.items():
+        # Pins on an expander are numbered separately from the chip's own pins
+        if key != CORE.target_platform or number not in logger_pins:
+            continue
+        for pin_path, _, pin_config in pin_list:
+            if pin_config.get(CONF_ALLOW_OTHER_USES):
+                continue
+            other = " -> ".join(str(part) for part in pin_path)
+            errs.append(
+                cv.Invalid(
+                    f"The logger is set to use {hardware_uart}, which sends its "
+                    f"output to pin {number}. Pin {number} is also used by "
+                    f"{other}, so the log output will interfere with it. To fix "
+                    f"this, either set baud_rate to 0 here to turn off logging "
+                    f"over the serial port, or move {other} to another pin.",
+                    [CONF_HARDWARE_UART],
+                )
+            )
+    if errs:
+        raise cv.MultipleInvalid(errs)
+
+
+FINAL_VALIDATE_SCHEMA = _check_pin_conflicts
 
 
 Logger = logger_ns.class_("Logger", cg.Component)
