@@ -78,9 +78,18 @@ def _make_modbus_line_callback() -> tuple[Callable[[str], None], list[str], list
     return line_callback, error_log_lines, warning_log_lines
 
 
+# Logged by the server hub when a queued frame supersedes a deferred reply; the shared
+# server fixture provokes it on purpose, so tests on that fixture filter it out.
+DEFERRED_REPLY_DROPPED = "Deferred server reply dropped: interrupted by new bytes"
+
+
 def _assert_no_modbus_errors(
-    error_log_lines: list[str], warning_log_lines: list[str]
+    error_log_lines: list[str],
+    warning_log_lines: list[str],
+    ignore: str | None = None,
 ) -> None:
+    if ignore is not None:
+        error_log_lines = [line for line in error_log_lines if ignore not in line]
     assert len(error_log_lines) == 0, (
         "Expect no errors logged by the modbus mock, but got:\n"
         + "\n".join(error_log_lines)
@@ -218,7 +227,9 @@ async def test_uart_mock_modbus_server(
     ):
         await tracker.setup_and_start_scenario(client)
         await tracker.await_all(futures)
-        _assert_no_modbus_errors(error_log_lines, warning_log_lines)
+        _assert_no_modbus_errors(
+            error_log_lines, warning_log_lines, ignore=DEFERRED_REPLY_DROPPED
+        )
 
 
 @pytest.mark.shared_yaml("uart_mock_modbus_server_injected")
@@ -262,7 +273,9 @@ async def test_uart_mock_modbus_server_read_write(
         await tracker.setup_and_start_scenario(client)
         # The FC 0x17 injections fire behind four earlier 100ms delays
         await tracker.await_all(futures, timeout=4.0)
-        _assert_no_modbus_errors(error_log_lines, warning_log_lines)
+        _assert_no_modbus_errors(
+            error_log_lines, warning_log_lines, ignore=DEFERRED_REPLY_DROPPED
+        )
 
 
 @pytest.mark.shared_yaml("uart_mock_modbus_server_injected")
@@ -315,8 +328,16 @@ async def test_uart_mock_modbus_server_burst(
         # Every request is parsed and served by its read_lambda regardless of
         # whether its reply reaches the wire.
         await tracker.await_all(futures, timeout=4.0)
-        _assert_no_modbus_errors(error_log_lines, warning_log_lines)
 
+    # One dropped reply per burst case, and nothing else.
+    dropped = [line for line in error_log_lines if DEFERRED_REPLY_DROPPED in line]
+    assert len(dropped) == 2, (
+        "Expected one dropped deferred reply per burst case, got errors:\n"
+        + "\n".join(error_log_lines)
+    )
+    _assert_no_modbus_errors(
+        error_log_lines, warning_log_lines, ignore=DEFERRED_REPLY_DROPPED
+    )
     assert not tracker.sensor_states["burst_tx_a"], (
         "reply to reg 0x0B must be dropped, a later request was queued behind it"
     )

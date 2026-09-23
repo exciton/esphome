@@ -204,10 +204,9 @@ void ModbusClientHub::parse_modbus_frames() {
 void ModbusServerHub::parse_modbus_frames() {
   while (!this->rx_buffer_.empty()) {
     if (this->deferred_payload_len_ != 0) {
-      // Another frame arrived before the deferred reply went out, so the client has moved on.
-      this->cancel_timeout("deferred_send");
-      ESP_LOGD(TAG, "Dropped deferred reply to %" PRIu8 ": a new frame arrived first", this->deferred_payload_[0]);
       this->deferred_payload_len_ = 0;
+      this->cancel_timeout("deferred_send");
+      ESP_LOGE(TAG, "Deferred server reply dropped: interrupted by new bytes");
     }
     size_t size = this->rx_buffer_.size();
     ESP_LOGVV(TAG, "Parsing frames buffer size = %" PRIu32, size);
