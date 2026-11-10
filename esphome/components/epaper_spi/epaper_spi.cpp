@@ -10,6 +10,12 @@
 #include "esphome/components/deep_sleep/deep_sleep_component.h"
 #endif
 
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+#include <cstring>
+#include <esp_attr.h>
+#include <miniz.h>
+#endif
+
 namespace esphome::epaper_spi {
 
 ESPHOME_LOG_TAG(TAG, "epaper_spi");
@@ -45,20 +51,31 @@ void EPaperBase::load_sleep_state_() {
     return;
   this->sleep_state_ = global_preferences->make_preference<SleepState>(this->sleep_state_hash_, false);
   SleepState state{};
-  if (this->woke_from_deep_sleep_() && this->sleep_state_.load(&state) && state.panel_holds_image) {
-    this->update_count_ = state.update_count % this->full_update_every_;
-    this->panel_holds_image_ = true;
-    ESP_LOGD(TAG, "Panel kept its image through deep sleep; next update is %s",
-             this->update_count_ != 0 ? LOG_STR_LITERAL("partial") : LOG_STR_LITERAL("full"));
+  if (this->woke_from_deep_sleep_() && this->sleep_state_.load(&state)) {
+    if (state.panel_holds_image) {
+      this->update_count_ = state.update_count % this->full_update_every_;
+      this->panel_holds_image_ = true;
+      ESP_LOGD(TAG, "Panel kept its image through deep sleep; next update is %s",
+               this->update_count_ != 0 ? LOG_STR_LITERAL("partial") : LOG_STR_LITERAL("full"));
+    }
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+    // sent_ is not allocated yet; the image is restored into it in init_sent_frame_()
+    if (state.image_size != 0)
+      this->stored_image_ = state;
+#endif
   }
   // Only a wake from deep sleep may use the state, so it is cleared once read
   this->save_sleep_state_(false);
 }
 
-void EPaperBase::save_sleep_state_(bool panel_holds_image) {
+void EPaperBase::save_sleep_state_(bool panel_holds_image, bool image_compressed, uint16_t image_size) {
   if (this->sleep_state_hash_ == 0 || !this->is_using_partial_update_())
     return;
-  const SleepState state{this->update_count_, panel_holds_image};
+  SleepState state{this->update_count_, panel_holds_image, image_compressed, image_size, 0};
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+  if (image_size != 0)
+    state.image_hash = this->image_store_hash_(image_size);
+#endif
   this->sleep_state_.save(&state);
 }
 
@@ -74,6 +91,15 @@ bool EPaperBase::teardown() {
   if (this->parked_)
     return true;
   this->parked_ = true;
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+  // With the image kept on this side the panel may lose its RAM, or its power, while asleep
+  bool compressed;
+  uint16_t size;
+  if (this->image_in_rtc_memory_ && this->has_frame_to_store() && this->store_image_(compressed, size)) {
+    this->save_sleep_state_(false, compressed, size);
+    return true;
+  }
+#endif
   if (this->panel_holds_image_ && this->image_survives_sleep())
     this->save_sleep_state_(true);
   return true;
@@ -101,25 +127,216 @@ bool EPaperBase::init_buffer_(size_t buffer_length) {
 bool EPaperBase::init_sent_frame_(size_t length) {
   if (!this->is_using_partial_update_() || this->sent_init_failed_)
     return false;
-  if (this->sent_.init(length))
+  if (this->sent_.init(length)) {
+    // An image kept in RTC memory across the sleep is restored into sent_, so the first update after the
+    // wake can seed it to the panel and refresh partially
+    this->try_restore_image_();
     return true;
+  }
   this->sent_init_failed_ = true;
   ESP_LOGW(TAG, "No memory for the previous frame; partial updates will send the whole drawn area");
   return false;
 }
 
-uint32_t EPaperBase::buffer_hash_() const {
+// Restores the image kept in RTC memory into the driver's frame, so the first update after the wake seeds
+// it to the panel and refreshes partially; a no-op unless this display owns the RTC store
+void EPaperBase::try_restore_image_() {
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+  if (this->stored_image_.image_size != 0 && this->restore_image_()) {
+    this->restore_previous_ = true;
+    this->update_count_ = this->stored_image_.update_count % this->full_update_every_;
+    ESP_LOGD(TAG, "Image restored from RTC memory; next update is %s",
+             this->update_count_ != 0 ? LOG_STR_LITERAL("partial") : LOG_STR_LITERAL("full"));
+  }
+  this->stored_image_.image_size = 0;
+#endif
+}
+
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+// The store spans the slow RTC segment then the fast one; a frame too big for one segment uses both
+static RTC_NOINIT_ATTR uint8_t s_image_store_slow[EPAPER_SPI_IMAGE_STORE_SLOW];  // NOLINT
+#if EPAPER_SPI_IMAGE_STORE_FAST > 0
+static RTC_FAST_ATTR uint8_t s_image_store_fast[EPAPER_SPI_IMAGE_STORE_FAST];  // NOLINT
+#endif
+
+namespace {
+// Returns the segment a store offset lands in and how many bytes are left in that segment from there
+uint8_t *store_region(size_t position, size_t &available) {
+  if (position < EPAPER_SPI_IMAGE_STORE_SLOW) {
+    available = EPAPER_SPI_IMAGE_STORE_SLOW - position;
+    return s_image_store_slow + position;
+  }
+#if EPAPER_SPI_IMAGE_STORE_FAST > 0
+  const size_t fast_position = position - EPAPER_SPI_IMAGE_STORE_SLOW;
+  available = EPAPER_SPI_IMAGE_STORE_FAST - fast_position;
+  return s_image_store_fast + fast_position;
+#else
+  available = 0;
+  return nullptr;
+#endif
+}
+// Copies length bytes into the store at position, crossing the segment boundary as needed
+void store_put(size_t position, const uint8_t *data, size_t length) {
+  while (length != 0) {
+    size_t available;
+    uint8_t *dest = store_region(position, available);
+    const size_t chunk = std::min(length, available);
+    memcpy(dest, data, chunk);
+    data += chunk;
+    position += chunk;
+    length -= chunk;
+  }
+}
+
+struct StoreWriter {
+  size_t position;
+};
+mz_bool write_to_store(const void *data, int length, void *user) {
+  auto *writer = static_cast<StoreWriter *>(user);
+  if (writer->position + length > EPAPER_SPI_IMAGE_STORE_SIZE)
+    return MZ_FALSE;
+  store_put(writer->position, static_cast<const uint8_t *>(data), length);
+  writer->position += length;
+  return MZ_TRUE;
+}
+}  // namespace
+
+uint32_t EPaperBase::image_store_hash_(size_t size) const {
+  uint32_t hash = FNV1_OFFSET_BASIS;
+  for (size_t position = 0; position != size;) {
+    size_t available;
+    const uint8_t *region = store_region(position, available);
+    const size_t chunk = std::min(size - position, available);
+    for (size_t i = 0; i != chunk; i++)
+      hash = fnv1_hash_extend(hash, region[i]);
+    position += chunk;
+  }
+  return hash;
+}
+
+// Copies the on-panel frame into RTC memory: as it is when it fits, otherwise as a DEFLATE stream
+bool EPaperBase::store_image_(bool &compressed, uint16_t &size) {
+  const size_t length = this->stored_frame().size();
+  if (length <= EPAPER_SPI_IMAGE_STORE_SIZE) {
+    for (size_t index = 0; index != length;) {
+      size_t span;
+      const uint8_t *data = this->stored_frame().get_span(index, span);
+      store_put(index, data, span);
+      index += span;
+    }
+    compressed = false;
+    size = length;
+    return true;
+  }
+  RAMAllocator<tdefl_compressor> allocator;
+  tdefl_compressor *compressor = allocator.allocate(1);
+  if (compressor == nullptr) {
+    ESP_LOGW(TAG, "No memory to compress the image; the next update after the wake will be full");
+    return false;
+  }
+  StoreWriter writer{};
+  tdefl_status status = tdefl_init(compressor, write_to_store, &writer, TDEFL_DEFAULT_MAX_PROBES);
+  for (size_t index = 0; index != length && status == TDEFL_STATUS_OKAY;) {
+    size_t span;
+    const uint8_t *data = this->stored_frame().get_span(index, span);
+    index += span;
+    status = tdefl_compress_buffer(compressor, data, span, index == length ? TDEFL_FINISH : TDEFL_NO_FLUSH);
+  }
+  allocator.deallocate(compressor, 1);
+  if (status != TDEFL_STATUS_DONE) {
+    ESP_LOGW(TAG, "Image does not compress into %u bytes; the next update after the wake will be full",
+             (unsigned) EPAPER_SPI_IMAGE_STORE_SIZE);
+    return false;
+  }
+  compressed = true;
+  size = writer.position;
+  return true;
+}
+
+bool EPaperBase::restore_image_() {
+  const SleepState &state = this->stored_image_;
+  const size_t length = this->stored_frame().size();
+  if (state.image_size > EPAPER_SPI_IMAGE_STORE_SIZE || this->image_store_hash_(state.image_size) != state.image_hash) {
+    ESP_LOGW(TAG, "Image in RTC memory is damaged; the next update will be full");
+    return false;
+  }
+  RAMAllocator<uint8_t> frame_allocator;
+  uint8_t *frame = frame_allocator.allocate(length);
+  if (frame == nullptr) {
+    ESP_LOGW(TAG, "No memory to restore the image; the next update will be full");
+    return false;
+  }
+  bool ok = false;
+  if (!state.image_compressed) {
+    if (state.image_size == length) {
+      for (size_t position = 0; position != length;) {
+        size_t available;
+        const uint8_t *region = store_region(position, available);
+        const size_t chunk = std::min(length - position, available);
+        memcpy(frame + position, region, chunk);
+        position += chunk;
+      }
+      ok = true;
+    }
+  } else {
+    RAMAllocator<tinfl_decompressor> allocator;
+    tinfl_decompressor *decompressor = allocator.allocate(1);
+    if (decompressor != nullptr) {
+      tinfl_init(decompressor);
+      // Feed the compressed stream a segment at a time, decompressing into one contiguous frame
+      const size_t from_slow = std::min<size_t>(state.image_size, EPAPER_SPI_IMAGE_STORE_SLOW);
+      const size_t from_fast = state.image_size - from_slow;
+      size_t in_size = from_slow;
+      size_t out_size = length;
+      tinfl_status status =
+          tinfl_decompress(decompressor, s_image_store_slow, &in_size, frame, frame, &out_size,
+                           TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF | (from_fast != 0 ? TINFL_FLAG_HAS_MORE_INPUT : 0));
+      size_t produced = out_size;
+#if EPAPER_SPI_IMAGE_STORE_FAST > 0
+      if (status == TINFL_STATUS_NEEDS_MORE_INPUT && from_fast != 0) {
+        in_size = from_fast;
+        out_size = length - produced;
+        status = tinfl_decompress(decompressor, s_image_store_fast, &in_size, frame, frame + produced, &out_size,
+                                  TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+        produced += out_size;
+      }
+#endif
+      ok = status == TINFL_STATUS_DONE && produced == length;
+      allocator.deallocate(decompressor, 1);
+    }
+  }
+  if (ok)
+    ok = this->accept_restored_frame(frame, length);
+  if (ok) {
+    // The panel shows the restored image (e-paper is bistable), so an unchanged frame after the wake is skipped
+    uint32_t hash = FNV1_OFFSET_BASIS;
+    for (size_t i = 0; i != length; i++)
+      hash = fnv1a_hash_extend(hash, frame[i]);
+    this->shown_hash_ = hash;
+    this->shown_hash_valid_ = true;
+  }
+  frame_allocator.deallocate(frame, length);
+  if (!ok) {
+    ESP_LOGW(TAG, "Image in RTC memory could not be restored; the next update will be full");
+  }
+  return ok;
+}
+#endif  // EPAPER_SPI_IMAGE_STORE_SIZE
+
+uint32_t EPaperBase::hash_buffer_(const split_buffer::SplitBuffer &buffer) const {
   uint32_t hash = FNV1_OFFSET_BASIS;
   size_t index = 0;
-  while (index != this->buffer_.size()) {
+  while (index != buffer.size()) {
     size_t length;
-    const uint8_t *data = this->buffer_.get_span(index, length);
+    const uint8_t *data = buffer.get_span(index, length);
     for (size_t i = 0; i != length; i++)
       hash = fnv1a_hash_extend(hash, data[i]);
     index += length;
   }
   return hash;
 }
+
+uint32_t EPaperBase::buffer_hash_() const { return this->hash_buffer_(this->buffer_); }
 
 void EPaperBase::set_full_bounds_() {
   this->x_low_ = 0;
@@ -354,6 +571,7 @@ void EPaperBase::process_state_() {
       this->shown_hash_valid_ = false;
       // A full update resets update_count_ to zero, so a non-zero count marks a partial one
       this->partial_ = this->update_count_ != 0;
+      this->sent_count_ = 0;
       this->set_state_(EPaperState::RESET);
       break;
     case EPaperState::INITIALISE:
@@ -366,6 +584,11 @@ void EPaperBase::process_state_() {
       if (!this->transfer_data()) {
         return;  // Not done yet, come back next loop
       }
+      // A whole frame recorded into sent_ is a valid previous frame to diff against or save to RTC memory
+      if (this->sent_.is_valid() && this->sent_count_ == this->sent_.size())
+        this->sent_valid_ = true;
+      // The restored previous frame, if any, has now been seeded to the panel
+      this->restore_previous_ = false;
       // A draw during the chunked push may not have reached the panel, so the next update sends the whole frame
       this->sent_hash_intact_ = this->is_using_partial_update_() && !this->drawn_since_hash_;
       if (this->drawn_since_hash_) {

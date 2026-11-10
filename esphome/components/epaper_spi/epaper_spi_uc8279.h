@@ -24,8 +24,10 @@ class EPaperUC8279 : public EPaperUltraChip {
                size_t init_sequence_length, uint16_t offset_height)
       : EPaperUltraChip(name, width, height, init_sequence, init_sequence_length, DISPLAY_TYPE_BINARY),
         offset_height_(offset_height) {}
+  ~EPaperUC8279() { this->free_restored_frame_(); }
 
  protected:
+  void setup() override;
   bool reset() override;
   bool initialise(bool partial) override;
   bool transfer_data() override;
@@ -34,13 +36,25 @@ class EPaperUC8279 : public EPaperUltraChip {
   void power_off() override;
   bool after_refresh() override;
 
+  // The on-panel image is the drawn buffer, so that is what is saved to and restored from RTC memory
+  const split_buffer::SplitBuffer &stored_frame() const override { return this->buffer_; }
+  bool accept_restored_frame(const uint8_t *data, size_t length) override;
+  bool has_frame_to_store() const override { return this->shown_hash_valid_; }
+
   uint16_t gate_count_() const { return this->offset_height_ + this->height_; }
   // Writes one gate's row of the image, or white for a gate outside the panel or when white is true
   void write_gate_(size_t gate, bool white);
   // Writes one plane in time slices, sending `command` at its first gate; true once all gates are written
   bool write_plane_(uint8_t command, bool white, size_t base);
+  // Writes one gate's row of the restored previous frame, white outside the panel
+  void write_gate_restored_(size_t gate);
+  // Writes the restored previous frame to a plane in time slices, to seed the panel after a wake
+  bool write_plane_restored_(uint8_t command, size_t base);
+  void free_restored_frame_();
 
   uint16_t offset_height_;
+  // The previous frame restored from RTC memory, held until it is seeded into the panel's DTM1 RAM
+  uint8_t *restored_frame_{nullptr};
 };
 
 }  // namespace esphome::epaper_spi

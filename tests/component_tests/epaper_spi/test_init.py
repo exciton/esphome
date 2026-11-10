@@ -13,6 +13,7 @@ from esphome.components.epaper_spi.display import (
     CONFIG_SCHEMA,
     FINAL_VALIDATE_SCHEMA,
     MODELS,
+    _validate_image_store,
 )
 from esphome.components.esp32 import (
     KEY_BOARD,
@@ -1155,3 +1156,71 @@ def test_test_card_overrides_update_interval(
     match = re.search(r"epaper_display->set_update_interval\((\d+)\);", main_cpp)
     assert match is not None
     assert int(match.group(1)) != 4294967295
+
+
+def test_partial_update_after_deep_sleep_rtc_memory(
+    set_core_config: SetCoreConfigCallable,
+    set_component_config: Callable[[str, Any], None],
+) -> None:
+    """The rtc_memory form takes a size and needs partial updates."""
+    set_core_config(
+        PlatformFramework.ESP32_IDF,
+        platform_data={KEY_BOARD: "esp32dev", KEY_VARIANT: VARIANT_ESP32},
+    )
+
+    set_component_config("spi", {"id": "spi_bus", "clk_pin": 18, "mosi_pin": 19})
+
+    config = run_schema_validation(
+        {
+            "id": "test_display",
+            "model": "ssd1681",
+            "dc_pin": 21,
+            "reset_pin": 23,
+            "full_update_every": 20,
+            "partial_update_after_deep_sleep": {"rtc_memory": "6kB"},
+        }
+    )
+    assert config["partial_update_after_deep_sleep"] == {"rtc_memory": 6000}
+
+    with pytest.raises(cv.Invalid, match="full_update_every"):
+        run_schema_validation(
+            {
+                "id": "test_display",
+                "model": "ssd1681",
+                "dc_pin": 21,
+                "reset_pin": 23,
+                "partial_update_after_deep_sleep": {"rtc_memory": "6kB"},
+            }
+        )
+
+    with pytest.raises(cv.Invalid, match="at most"):
+        run_schema_validation(
+            {
+                "id": "test_display",
+                "model": "ssd1681",
+                "dc_pin": 21,
+                "reset_pin": 23,
+                "full_update_every": 20,
+                "partial_update_after_deep_sleep": {"rtc_memory": "16kB"},
+            }
+        )
+
+
+def test_rtc_memory_only_on_esp32(
+    set_core_config: SetCoreConfigCallable,
+) -> None:
+    """The image store is RTC memory on the ESP32; other platforms reject the option."""
+    set_core_config(PlatformFramework.ESP8266_ARDUINO)
+
+    with pytest.raises(cv.Invalid, match="ESP32"):
+        _validate_image_store("6kB")
+
+
+def test_rtc_memory_code_generation(
+    generate_main: Callable[[str | Path], str],
+    component_config_path: Callable[[str], Path],
+) -> None:
+    """rtc_memory marks the display as the owner of the image store in RTC memory."""
+    main_cpp = generate_main(component_config_path("rtc_memory_test.yaml"))
+
+    assert "epaper_display->set_image_in_rtc_memory(true)" in main_cpp

@@ -70,6 +70,9 @@ class EPaperBase : public Display,
   }
   void set_full_update_every(uint8_t full_update_every) { this->full_update_every_ = full_update_every; }
   void set_sleep_state_hash(uint32_t hash) { this->sleep_state_hash_ = hash; }
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+  void set_image_in_rtc_memory(bool image_in_rtc_memory) { this->image_in_rtc_memory_ = image_in_rtc_memory; }
+#endif
   bool teardown() override;
   void on_powerdown() override;
   void dump_config() override;
@@ -143,13 +146,29 @@ class EPaperBase : public Display,
   // Allocates the copy of the previous frame; only drivers that diff against it (needs_previous_frame) call this
   bool init_sent_frame_(size_t length);
   void record_sent_(size_t index, const uint8_t *data, size_t length) {
-    if (this->sent_.is_valid())
+    if (this->sent_.is_valid()) {
       this->sent_.write(index, data, length);
+      this->sent_count_ += length;
+    }
   }
-  // Whether the driver reads the previous frame (sent_) for its differential refresh
-  virtual bool needs_previous_frame() const { return false; }
+  // Whether the driver keeps a copy of the previous frame: to diff against it for a partial refresh, or to
+  // save it to RTC memory across a deep sleep
+  virtual bool needs_previous_frame() const { return this->image_in_rtc_memory_; }
   // FNV-1a hash of the current frame buffer, to detect an unchanged frame without a full copy
   uint32_t buffer_hash_() const;
+  uint32_t hash_buffer_(const split_buffer::SplitBuffer &buffer) const;
+  // The frame the driver keeps a copy of (sent_), overridden where the stored frame lives elsewhere
+  virtual const split_buffer::SplitBuffer &stored_frame() const { return this->sent_; }
+  // Takes a restored frame; the default puts it back in sent_, which is then a valid previous frame
+  virtual bool accept_restored_frame(const uint8_t *data, size_t length) {
+    this->sent_.write(0, data, length);
+    this->sent_valid_ = true;
+    return true;
+  }
+  // Whether a whole frame is held to save to RTC memory; the default is the sent_ copy
+  virtual bool has_frame_to_store() const { return this->sent_valid_; }
+  // Restores the RTC-kept image into the driver's frame and arms the seed; a no-op without the RTC store
+  void try_restore_image_();
   void reset_bounds_();
   void set_full_bounds_();
   // For a draw that writes the whole buffer without going through rotate_coordinates_()
@@ -210,11 +229,22 @@ class EPaperBase : public Display,
   struct SleepState {
     uint8_t update_count;
     uint8_t panel_holds_image;
+    uint8_t image_compressed;
+    uint16_t image_size;  // bytes of the image kept in RTC memory; 0 if none
+    uint32_t image_hash;
   };
   bool woke_from_deep_sleep_() const;
   bool leave_update_to_teardown_() const;
   void load_sleep_state_();
-  void save_sleep_state_(bool panel_holds_image);
+  void save_sleep_state_(bool panel_holds_image, bool image_compressed = false, uint16_t image_size = 0);
+#ifdef EPAPER_SPI_IMAGE_STORE_SIZE
+  // The image on the panel, kept in RTC memory through the controller's deep sleep so a partial update can
+  // follow the wake even if the panel lost its RAM or its power
+  bool store_image_(bool &compressed, uint16_t &size);
+  bool restore_image_();
+  uint32_t image_store_hash_(size_t size) const;
+  SleepState stored_image_{};
+#endif
   ESPPreferenceObject sleep_state_;
   uint32_t sleep_state_hash_{};
   bool parked_{};
@@ -237,13 +267,17 @@ class EPaperBase : public Display,
   size_t buffer_length_;
   size_t current_data_index_{};  // used by data transfer to track progress
   split_buffer::SplitBuffer buffer_{};
-  split_buffer::SplitBuffer sent_{};  // the previous frame, kept only by drivers that diff against it
+  split_buffer::SplitBuffer sent_{};  // the previous frame, kept by drivers that diff against it or save it to RTC
   bool sent_init_failed_{};           // sent_ could not be allocated, so it is not tried again
+  bool sent_valid_{};                 // sent_ holds a whole frame
+  size_t sent_count_{};               // bytes recorded into sent_ by the update in progress
   uint32_t shown_hash_{};             // hash of the frame on the panel, to skip an unchanged update
   bool shown_hash_valid_{};           // shown_hash_ holds the hash of a frame whose refresh completed
   bool sent_hash_intact_{};           // the buffer was unchanged by the end of the push of shown_hash_
   bool drawn_since_hash_{};           // something was drawn after shown_hash_ was taken
   bool panel_holds_image_{};          // the panel holds the image it shows, as a partial update needs
+  bool restore_previous_{};           // the next transfer must also write sent_ to the panel's previous-image RAM
+  bool image_in_rtc_memory_{};        // this display saves its image to RTC memory across a deep sleep
   GPIOPin *dc_pin_{};
   GPIOPin *busy_pin_{};
   GPIOPin *reset_pin_{};

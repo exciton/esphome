@@ -45,7 +45,7 @@ from esphome.core import CORE
 from esphome.cpp_generator import RawExpression
 from esphome.helpers import fnv1a_32bit_hash
 
-from . import models, register_sources
+from . import claim_rtc_store, models, register_sources
 
 AUTO_LOAD = ["split_buffer"]
 DEPENDENCIES = ["spi"]
@@ -55,6 +55,15 @@ CONF_MINIMUM_UPDATE_INTERVAL = "minimum_update_interval"
 CONF_PARTIAL_UPDATE_AFTER_DEEP_SLEEP = "partial_update_after_deep_sleep"
 # The display stays powered through the deep sleep and keeps the image itself
 PANEL = "panel"
+# The image is kept in the ESP32's RTC memory, so the display may lose it, or its power, while asleep
+CONF_RTC_MEMORY = "rtc_memory"
+
+# One display per build can keep its image in RTC memory. The store is split across the slow
+# RTC_NOINIT segment and the fast RTC_FAST segment, each about 8 kB and shared with the rest of the
+# system, so a frame too big for one segment (e.g. the 800x480 X4 Pro) still fits across both.
+IMAGE_STORE_SLOW_SIZE = 7 * 1024
+IMAGE_STORE_FAST_SIZE = 7 * 1024
+MAX_IMAGE_STORE_SIZE = IMAGE_STORE_SLOW_SIZE + IMAGE_STORE_FAST_SIZE
 
 epaper_spi_ns = cg.esphome_ns.namespace("epaper_spi")
 EPaperBase = epaper_spi_ns.class_(
@@ -123,10 +132,26 @@ def _sleep_resume_supported() -> bool:
     return get_esp32_variant() not in (VARIANT_ESP32C2, VARIANT_ESP32C61)
 
 
+def _validate_image_store(value: Any) -> int:
+    if not CORE.is_esp32:
+        raise cv.Invalid("Only supported on ESP32 variants with RTC memory")
+    return cv.All(cv.validate_bytes, cv.int_range(min=1, max=MAX_IMAGE_STORE_SIZE))(
+        value
+    )
+
+
+IMAGE_STORE_SCHEMA = cv.Schema({cv.Required(CONF_RTC_MEMORY): _validate_image_store})
+
+
 def _partial_update_after_deep_sleep_validator(
     model: models.EpaperModel,
 ) -> Callable[[Any], Any]:
     def validate(value: Any) -> Any:
+        # The rtc_memory form keeps the image on the ESP32; the panel form leaves it on a powered panel
+        if isinstance(value, dict):
+            if not model.get_default(models.KEEPS_IMAGE_IN_RTC):
+                raise cv.Invalid(f"{model.name} does not support this option")
+            return IMAGE_STORE_SCHEMA(value)
         if not model.get_default(models.RESUMES_AFTER_DEEP_SLEEP):
             raise cv.Invalid(f"{model.name} does not support this option")
         if not _sleep_resume_supported():
@@ -226,6 +251,15 @@ def customise_schema(config):
         for pin in config.get(CONF_ENABLE_PIN, []):
             if CONF_HOLD_STATE in pin:
                 pin[CONF_HOLD_STATE] = True
+    # The image store is a single static array, so only one display per build can own it
+    if (
+        isinstance(config.get(CONF_PARTIAL_UPDATE_AFTER_DEEP_SLEEP), dict)
+        and not claim_rtc_store()
+    ):
+        raise cv.Invalid(
+            f"Only one display can keep its image in {CONF_RTC_MEMORY}",
+            path=[CONF_PARTIAL_UPDATE_AFTER_DEEP_SLEEP],
+        )
     width, height = model.get_dimensions(config)
     if width % (width_multiple := model.get_default("width_multiple", 1)):
         raise cv.Invalid(
@@ -310,6 +344,15 @@ async def to_code(config):
         # A few bytes in RTC memory let the first update after a deep sleep wake be partial
         preferences.request_rtc_storage()
         cg.add(var.set_sleep_state_hash(fnv1a_32bit_hash(str(config[CONF_ID]))))
+        if isinstance(mode := config[CONF_PARTIAL_UPDATE_AFTER_DEEP_SLEEP], dict):
+            # The whole image is kept in RTC memory, so the panel may lose it, or its power, while asleep.
+            # The slow segment is filled first; only a larger image spills into the fast one.
+            total = mode[CONF_RTC_MEMORY]
+            slow = min(total, IMAGE_STORE_SLOW_SIZE)
+            cg.add_define("EPAPER_SPI_IMAGE_STORE_SLOW", slow)
+            cg.add_define("EPAPER_SPI_IMAGE_STORE_FAST", total - slow)
+            cg.add_define("EPAPER_SPI_IMAGE_STORE_SIZE", total)
+            cg.add(var.set_image_in_rtc_memory(True))
     cg.add_optional(var.set_reset_duration, config.get(CONF_RESET_DURATION))
     if transform := config.get(CONF_TRANSFORM):
         transform[CONF_SWAP_XY] = False

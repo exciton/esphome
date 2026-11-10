@@ -34,6 +34,20 @@ class TestableSSD1681 : public EPaperSSD1681 {
     this->panel_holds_image_ = true;
   }
 
+  /// What init_sent_frame_() restores after a wake when the image was kept in RTC memory and the panel may
+  /// have lost its RAM: the previous frame in sent_, ready to be seeded to the panel's 0x26 bank.
+  void restore_image_after_wake(std::initializer_list<uint8_t> bytes, uint8_t update_count) {
+    ASSERT_TRUE(this->sent_.init(this->buffer_length_));
+    size_t i = 0;
+    for (const uint8_t byte : bytes)
+      this->sent_[i++] = byte;
+    this->sent_valid_ = true;
+    this->restore_previous_ = true;
+    this->shown_hash_ = this->hash_buffer_(this->sent_);
+    this->shown_hash_valid_ = true;
+    this->update_count_ = update_count;
+  }
+
   using EPaperSSD1681::on_powerdown;
   using EPaperSSD1681::on_safe_shutdown;
   using EPaperSSD1681::teardown;
@@ -411,6 +425,52 @@ TEST(EPaperSSD1681, FirstUpdateAfterWakeIsPartial) {
   display.set_frame({0x0F, 0xF0, 0x3C, 0xC3});
   display.set_dirty(0, 0, 16, 2);
   EXPECT_FALSE(display.run_update()) << "shown frame was not recorded by the first update";
+}
+
+/// After a wake with the image kept in RTC memory, the first update that changes something writes the
+/// restored previous frame to 0x26 and the whole new frame to 0x24, re-seeding the panel that lost its RAM.
+/// Later partials go back to the normal whole-0x24 path, with 0x26 left to the ping-pong.
+TEST(EPaperSSD1681, FirstUpdateAfterWakeRewritesBothBanksFromTheKeptImage) {
+  TestableSSD1681 display(16, 2);
+  RecordingDelegate bus(&display.dc);
+  display.install(&bus, 5);
+  display.restore_image_after_wake({0x0F, 0xF0, 0x3C, 0xC3}, 3);
+
+  display.set_frame({0x0F, 0xF0, 0x3C, 0x00});
+  display.set_dirty(8, 1, 16, 2);
+  EXPECT_TRUE(display.run_update());
+  EXPECT_EQ(bus.data[0x44], (Bytes{0, 1})) << "window is not the whole panel";
+  EXPECT_EQ(bus.data[0x26], (Bytes{0x0F, 0xF0, 0x3C, 0xC3})) << "previous-image bank is not the kept image";
+  EXPECT_EQ(bus.data[0x24], (Bytes{0x0F, 0xF0, 0x3C, 0x00}));
+  EXPECT_EQ(bus.data[0x21], (Bytes{0x00, 0x00}));
+  EXPECT_EQ(bus.data[0x22], (Bytes{0xFF}));
+  bus.clear();
+
+  display.set_frame({0x0F, 0xF0, 0x00, 0x00});
+  display.set_dirty(0, 0, 16, 2);
+  EXPECT_TRUE(display.run_update());
+  EXPECT_EQ(bus.data.count(0x26), 0u) << "a later partial wrote 0x26 instead of leaving it to the ping-pong";
+  EXPECT_EQ(bus.data[0x24], (Bytes{0x0F, 0xF0, 0x00, 0x00})) << "a later partial did not send the whole frame to 0x24";
+}
+
+/// An unchanged frame is skipped even right after the wake, since e-paper is bistable and the panel still
+/// shows the kept image; the restore waits, and the panel's RAM is only re-seeded when something changes.
+TEST(EPaperSSD1681, UnchangedFrameAfterWakeIsSkippedAndTheRestoreWaits) {
+  TestableSSD1681 display(16, 2);
+  RecordingDelegate bus(&display.dc);
+  display.install(&bus, 5);
+  display.restore_image_after_wake({0x0F, 0xF0, 0x3C, 0xC3}, 3);
+
+  display.set_frame({0x0F, 0xF0, 0x3C, 0xC3});  // the same image the panel already shows
+  display.set_dirty(0, 0, 16, 2);
+  EXPECT_FALSE(display.run_update()) << "unchanged frame after wake was not skipped";
+  EXPECT_TRUE(bus.commands.empty());
+
+  display.set_frame({0x0F, 0xF0, 0x3C, 0x00});
+  display.set_dirty(8, 1, 16, 2);
+  EXPECT_TRUE(display.run_update());
+  EXPECT_EQ(bus.data[0x26], (Bytes{0x0F, 0xF0, 0x3C, 0xC3})) << "the kept image was not seeded on the first change";
+  EXPECT_EQ(bus.data[0x24], (Bytes{0x0F, 0xF0, 0x3C, 0x00}));
 }
 
 }  // namespace esphome::epaper_spi::testing

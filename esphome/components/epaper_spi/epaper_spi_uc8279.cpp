@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome::epaper_spi {
@@ -85,18 +86,25 @@ bool HOT EPaperUC8279::write_plane_(uint8_t command, bool white, size_t base) {
   return true;
 }
 
-// DTM2 gets the new image; a full refresh also writes a white DTM1, so every pixel transitions
+// DTM2 gets the new image; a full refresh also writes a white DTM1. After a wake that lost the panel's RAM
+// the first partial seeds DTM1 with the restored previous frame instead, so only changed pixels transition.
 bool HOT EPaperUC8279::transfer_data() {
   const size_t gates = this->gate_count_();
   if (this->current_data_index_ < gates) {
     if (!this->write_plane_(CMD_DTM2, false, 0))
       return false;
-    // Start DTM1 on the next pass, so this one stays within its time slice
-    if (!this->partial_)
+    // Start the second plane on the next pass, so this one stays within its time slice
+    if (!this->partial_ || this->restore_previous_)
       return false;
   }
-  if (!this->partial_ && !this->write_plane_(CMD_DTM1, true, gates))
-    return false;
+  if (!this->partial_) {
+    if (!this->write_plane_(CMD_DTM1, true, gates))
+      return false;
+  } else if (this->restore_previous_) {
+    if (!this->write_plane_restored_(CMD_DTM1, gates))
+      return false;
+    this->free_restored_frame_();
+  }
   this->current_data_index_ = 0;
   return true;
 }
@@ -139,6 +147,64 @@ bool HOT EPaperUC8279::after_refresh() {
 void EPaperUC8279::power_off() {
   this->command(CMD_POWER_OFF);
   this->next_delay_ = BUSY_ASSERT_MS;
+}
+
+void EPaperUC8279::setup() {
+  EPaperBase::setup();
+  // buffer_ is ready, so an image kept in RTC memory can be restored into the heap and seeded on the first update
+  this->try_restore_image_();
+}
+
+bool EPaperUC8279::accept_restored_frame(const uint8_t *data, size_t length) {
+  this->free_restored_frame_();
+  RAMAllocator<uint8_t> allocator;
+  this->restored_frame_ = allocator.allocate(length);
+  if (this->restored_frame_ == nullptr)
+    return false;
+  memcpy(this->restored_frame_, data, length);
+  return true;
+}
+
+void EPaperUC8279::free_restored_frame_() {
+  if (this->restored_frame_ == nullptr)
+    return;
+  RAMAllocator<uint8_t> allocator;
+  allocator.deallocate(this->restored_frame_, this->buffer_length_);
+  this->restored_frame_ = nullptr;
+}
+
+void EPaperUC8279::write_gate_restored_(size_t gate) {
+  const size_t row_width = this->row_width_;
+  const uint8_t *row = nullptr;
+  uint8_t white_bytes[MAX_TRANSFER_SIZE];
+  if (gate < this->offset_height_) {
+    memset(white_bytes, 0xFF, sizeof(white_bytes));
+  } else {
+    row = this->restored_frame_ + (gate - this->offset_height_) * row_width;
+  }
+  for (size_t written = 0; written != row_width;) {
+    const size_t length = std::min(row_width - written, MAX_TRANSFER_SIZE);
+    this->write_array(row != nullptr ? row + written : white_bytes, length);
+    written += length;
+  }
+}
+
+bool HOT EPaperUC8279::write_plane_restored_(uint8_t command, size_t base) {
+  const uint32_t start_time = millis();
+  const size_t gates = this->gate_count_();
+  if (this->current_data_index_ == base)
+    this->command(command);
+  this->start_data_();
+  while (this->current_data_index_ - base != gates) {
+    this->write_gate_restored_(this->current_data_index_ - base);
+    ++this->current_data_index_;
+    if (this->current_data_index_ - base != gates && millis() - start_time > MAX_TRANSFER_TIME) {
+      this->disable();
+      return false;
+    }
+  }
+  this->disable();
+  return true;
 }
 
 }  // namespace esphome::epaper_spi

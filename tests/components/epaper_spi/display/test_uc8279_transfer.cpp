@@ -56,6 +56,20 @@ class TestableUC8279 : public EPaperUC8279 {
 
   bool transfer() { return this->transfer_data(); }
 
+  // Puts the display in the state setup() leaves it in after a wake that restored the image from RTC memory:
+  // the restored frame is held on the heap and restore_previous_ is armed to seed it on the first update.
+  void restore_image_after_wake(std::initializer_list<uint8_t> bytes, uint8_t update_count) {
+    this->set_frame(bytes);  // load the restored image into buffer_ so its hash and bytes can be taken
+    std::vector<uint8_t> frame(this->buffer_length_);
+    for (size_t i = 0; i != this->buffer_length_; i++)
+      frame[i] = this->buffer_[i];
+    ASSERT_TRUE(this->accept_restored_frame(frame.data(), this->buffer_length_));
+    this->restore_previous_ = true;
+    this->shown_hash_ = this->buffer_hash_();
+    this->shown_hash_valid_ = true;
+    this->update_count_ = update_count;
+  }
+
   using EPaperUC8279::on_safe_shutdown;
 
   RecordingPin dc;
@@ -232,6 +246,46 @@ TEST(EPaperUC8279, ShutdownPutsThePanelToSleep) {
   bus.clear();
   display.on_safe_shutdown();
   EXPECT_EQ(bus.data[0x07], (Bytes{0xA5}));
+}
+
+/// After a wake that lost the panel's RAM, the first partial update seeds DTM1 with the restored previous
+/// frame (not from buffer_) and writes the new frame to DTM2, so the partial refresh drives only the
+/// changed pixels. The next update is a normal partial, writing DTM1 from buffer_ again.
+TEST(EPaperUC8279, FirstUpdateAfterWakeSeedsDtm1FromTheRestoredFrame) {
+  TestableUC8279 display;
+  RecordingDelegate bus(&display.dc);
+  display.install(&bus, 5);
+  display.restore_image_after_wake({0xAA, 0xBB, 0xCC, 0xDD}, 3);
+
+  display.set_frame({0x0F, 0xF0, 0x3C, 0x00});
+  display.run_update();
+
+  EXPECT_EQ(bus.data[0x13], (Bytes{0xFF, 0xFF, 0x0F, 0xF0, 0x3C, 0x00})) << "DTM2 is not the new frame";
+  ASSERT_EQ(bus.data[0x10].size(), 12u) << "DTM1 is not the restored seed plus the after-refresh rewrite";
+  EXPECT_EQ(Bytes(bus.data[0x10].begin(), bus.data[0x10].begin() + 6), (Bytes{0xFF, 0xFF, 0xAA, 0xBB, 0xCC, 0xDD}))
+      << "DTM1 was not seeded from the restored previous frame";
+  EXPECT_EQ(Bytes(bus.data[0x10].begin() + 6, bus.data[0x10].end()), (Bytes{0xFF, 0xFF, 0x0F, 0xF0, 0x3C, 0x00}))
+      << "DTM1 was not rewritten from the new frame after the refresh";
+  bus.clear();
+
+  display.set_frame({0x0F, 0xF0, 0x00, 0x00});
+  display.run_update();
+  EXPECT_EQ(bus.data[0x13], (Bytes{0xFF, 0xFF, 0x0F, 0xF0, 0x00, 0x00}));
+  EXPECT_EQ(bus.data[0x10], (Bytes{0xFF, 0xFF, 0x0F, 0xF0, 0x00, 0x00}))
+      << "a later update seeded DTM1 again instead of leaving it to the normal after-refresh rewrite";
+}
+
+/// An unchanged frame right after the wake is skipped: e-paper is bistable, so the panel still shows the
+/// restored image, and the restore waits for a real change.
+TEST(EPaperUC8279, UnchangedFrameAfterWakeIsSkipped) {
+  TestableUC8279 display;
+  RecordingDelegate bus(&display.dc);
+  display.install(&bus, 5);
+  display.restore_image_after_wake({0xAA, 0xBB, 0xCC, 0xDD}, 3);
+
+  display.set_frame({0xAA, 0xBB, 0xCC, 0xDD});  // the image the panel already shows
+  display.run_update();
+  EXPECT_TRUE(bus.commands.empty()) << "unchanged frame after wake was not skipped";
 }
 
 }  // namespace esphome::epaper_spi::testing

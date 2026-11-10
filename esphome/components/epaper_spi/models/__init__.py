@@ -6,8 +6,12 @@ from esphome.const import CONF_DIMENSIONS, CONF_HEIGHT, CONF_OFFSET_HEIGHT, CONF
 from esphome.cpp_generator import MockObj
 from esphome.types import ConfigType
 
-# Model default: the driver can make the first update after a deep sleep wake a partial one
+# Model default: the driver keeps its image on the panel, powered, so the first update after a deep
+# sleep wake can be partial
 RESUMES_AFTER_DEEP_SLEEP = "resumes_after_deep_sleep"
+# Model default: the driver can restore its image from RTC memory and seed the panel after a wake,
+# so the panel may lose its image, or its power, while asleep
+KEEPS_IMAGE_IN_RTC = "keeps_image_in_rtc"
 
 
 def ultrachip_resolution(width: int, gates: int) -> tuple:

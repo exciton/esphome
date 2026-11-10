@@ -965,3 +965,16 @@
 #ifndef LV_GRADIENT_MAX_STOPS
 #define LV_GRADIENT_MAX_STOPS 7
 #endif
+
+// epaper_spi keeps the on-panel image in RTC memory across deep sleep (partial_update_after_deep_sleep:
+// rtc_memory). The real sizes come from the configured byte budget, split into a slow and a fast RTC
+// region; representative non-zero values are set here so static analysis sees both regions.
+#ifndef EPAPER_SPI_IMAGE_STORE_SLOW
+#define EPAPER_SPI_IMAGE_STORE_SLOW 7168
+#endif
+#ifndef EPAPER_SPI_IMAGE_STORE_FAST
+#define EPAPER_SPI_IMAGE_STORE_FAST 7168
+#endif
+#ifndef EPAPER_SPI_IMAGE_STORE_SIZE
+#define EPAPER_SPI_IMAGE_STORE_SIZE (EPAPER_SPI_IMAGE_STORE_SLOW + EPAPER_SPI_IMAGE_STORE_FAST)
+#endif

@@ -1,0 +1,27 @@
+packages:
+  spi: !include ../../test_build_components/common/spi/esp32-s3-idf.yaml
+
+deep_sleep:
+  run_duration: 10s
+  sleep_duration: 60s
+
+display:
+  - platform: epaper_spi
+    spi_id: spi_bus
+    model: ssd1681
+    cs_pin:
+      allow_other_uses: true
+      number: GPIO5
+    dc_pin:
+      allow_other_uses: true
+      number: GPIO17
+    reset_pin:
+      allow_other_uses: true
+      number: GPIO16
+    busy_pin:
+      allow_other_uses: true
+      number: GPIO4
+    full_update_every: 20
+    update_interval: never
+    partial_update_after_deep_sleep:
+      rtc_memory: 6kB

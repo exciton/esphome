@@ -15,7 +15,7 @@ import esphome.config_validation as cv
 from esphome.const import CONF_DATA_RATE, CONF_DIMENSIONS, CONF_OFFSET_HEIGHT
 from esphome.types import ConfigType
 
-from . import EpaperModel, ultrachip_resolution
+from . import KEEPS_IMAGE_IN_RTC, EpaperModel, ultrachip_resolution
 
 
 class UC8279(EpaperModel):
@@ -35,6 +35,7 @@ class UC8279(EpaperModel):
         defaults.setdefault("partial_update", True)
         defaults.setdefault(CONF_OFFSET_HEIGHT, 0)
         defaults.setdefault("width_multiple", 8)
+        defaults.setdefault(KEEPS_IMAGE_IN_RTC, True)
         super().__init__(name, class_name=class_name, **defaults)
 
     def validate_config(self, config: ConfigType) -> ConfigType:

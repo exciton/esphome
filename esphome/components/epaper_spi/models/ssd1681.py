@@ -4,7 +4,7 @@ import esphome.config_validation as cv
 from esphome.const import CONF_DIMENSIONS, CONF_RESET_PIN
 from esphome.types import ConfigType
 
-from . import RESUMES_AFTER_DEEP_SLEEP
+from . import KEEPS_IMAGE_IN_RTC, RESUMES_AFTER_DEEP_SLEEP
 from .ssd1683 import SSD1683
 
 MAX_WIDTH = 200
@@ -22,6 +22,7 @@ class SSD1681(SSD1683):
         self, name: str, class_name: str = "EPaperSSD1681", **defaults: Any
     ) -> None:
         defaults.setdefault(RESUMES_AFTER_DEEP_SLEEP, True)
+        defaults.setdefault(KEEPS_IMAGE_IN_RTC, True)
         super().__init__(name, class_name=class_name, **defaults)
 
     def validate_config(self, config: ConfigType) -> ConfigType:
